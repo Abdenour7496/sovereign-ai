@@ -75,6 +75,8 @@ class EligibilityEngine:
         criteria_met = []
         criteria_failed = []
         missing_information = []
+        missing_fields: list[str] = []       # raw field names, for metrics
+        unknown_operators: list[str] = []    # operators not in OPERATORS map, for coverage
         condition_results = []
         legal_citations = set()
         all_mandatory_passed = True
@@ -85,7 +87,7 @@ class EligibilityEngine:
             conditions = rule.get("conditions", [])
 
             if not conditions:
-                # Rule has no conditions — skip
+                # Rule has no conditions — skip (orphan rule)
                 continue
 
             rule_passed = True
@@ -99,10 +101,29 @@ class EligibilityEngine:
                 cond_name = condition.get("name", field)
                 legal_ref = condition.get("legal_reference")
 
+                # Detect unsupported operator before attempting evaluation
+                if operator not in self.OPERATORS:
+                    log.warning(
+                        f"Unknown operator '{operator}' on condition '{cond_name}' "
+                        f"in rule '{rule_name}' — cannot evaluate deterministically"
+                    )
+                    if operator not in unknown_operators:
+                        unknown_operators.append(operator)
+                    rule_conditions_evaluated.append({
+                        "condition": cond_name,
+                        "status": "unknown_operator",
+                        "field": field,
+                        "operator": operator,
+                    })
+                    rule_passed = False
+                    continue
+
                 if field not in applicant_data:
                     missing_information.append(
                         f"'{cond_name}' — please provide your {field.replace('_', ' ')}"
                     )
+                    if field not in missing_fields:
+                        missing_fields.append(field)
                     rule_conditions_evaluated.append({
                         "condition": cond_name,
                         "status": "missing_data",
@@ -174,10 +195,13 @@ class EligibilityEngine:
             "criteria_met": criteria_met,
             "criteria_failed": criteria_failed,
             "missing_information": missing_information,
+            "missing_fields": missing_fields,
+            "unknown_operators": unknown_operators,
             "condition_results": condition_results,
             "legal_citations": sorted(legal_citations),
             "summary": summary,
             "weekly_max_rate": benefit.get("weekly_max_rate"),
+            "no_rules": False,
         }
 
     def evaluate_single_condition(
@@ -248,7 +272,10 @@ class EligibilityEngine:
             "criteria_met": [],
             "criteria_failed": [],
             "missing_information": [reason],
+            "missing_fields": [],
+            "unknown_operators": [],
             "condition_results": [],
             "legal_citations": [],
             "summary": f"Cannot evaluate eligibility: {reason}",
+            "no_rules": True,  # signals pipeline to escalate to higher tier
         }

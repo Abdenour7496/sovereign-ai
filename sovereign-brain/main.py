@@ -46,6 +46,7 @@ from audit.security_scanner import ScanResult, scan as security_scan, query_hash
 from config import settings
 from governance.fingerprint import SystemFingerprint
 from eligibility.engine import EligibilityEngine
+from eligibility.coverage import EligibilityCoverageMonitor
 from llm.client import GenerationMetadata, LLMClient
 from network.egress_monitor import EgressBlockedError
 from policy.graph_interface import PolicyGraph
@@ -118,6 +119,32 @@ ESCALATION_LOCKED = Counter(
     "Routing decisions held at session peak tier by escalation lock",
     ["tier"],
 )
+# ── Eligibility Coverage Metrics ──────────────────────────────────────────────
+COVERAGE_RULES_TOTAL = Gauge(
+    "sovereign_coverage_rules_total",
+    "Total eligibility rules per benefit in the policy graph",
+    ["benefit"],
+)
+COVERAGE_ORPHAN_RULES = Gauge(
+    "sovereign_coverage_orphan_rules_total",
+    "Rules with no conditions per benefit (cannot be deterministically evaluated)",
+    ["benefit"],
+)
+UNKNOWN_OPERATOR = Counter(
+    "sovereign_unknown_operator_total",
+    "Unknown condition operators encountered during eligibility evaluation",
+    ["operator", "benefit"],
+)
+MISSING_FIELD = Counter(
+    "sovereign_condition_missing_data_total",
+    "Eligibility conditions where applicant data was absent",
+    ["benefit", "field"],
+)
+NO_RULES_ESCALATION = Counter(
+    "sovereign_no_rules_escalation_total",
+    "Escalations triggered because no deterministic rules were found for a benefit",
+    ["benefit"],
+)
 
 # ── Session Peak Tier Registry ────────────────────────────────────────────────
 # In-memory per-session escalation lock. Maps session_id → highest tier seen.
@@ -131,6 +158,7 @@ policy_graph: Optional[PolicyGraph] = None
 rag: Optional[RAGRetriever] = None
 llm: Optional[LLMClient] = None
 eligibility: Optional[EligibilityEngine] = None
+coverage_monitor: Optional[EligibilityCoverageMonitor] = None
 audit: Optional[AuditLogger] = None
 fingerprint: Optional[SystemFingerprint] = None
 dual_control: Optional[DualControlManager] = None
@@ -191,6 +219,40 @@ async def lifespan(app: FastAPI):
 
     eligibility = EligibilityEngine(policy_graph)
     log.info("✅ Deterministic eligibility engine ready")
+
+    # ── Eligibility Coverage Monitor ──────────────────────────────────────
+    global coverage_monitor
+    coverage_monitor = EligibilityCoverageMonitor(policy_graph)
+    if policy_graph:
+        try:
+            cov_report = await coverage_monitor.refresh()
+            for b in cov_report.get("benefits", []):
+                bid = b["benefit_id"]
+                COVERAGE_RULES_TOTAL.labels(benefit=bid).set(b["total_rules"])
+                COVERAGE_ORPHAN_RULES.labels(benefit=bid).set(b["orphan_rules"])
+                if b["orphan_rules"] > 0:
+                    log.warning(
+                        "Coverage: benefit '%s' has %d orphan rule(s) — "
+                        "rules with no conditions cannot be deterministically evaluated",
+                        bid, b["orphan_rules"],
+                    )
+                if b["unknown_operators"]:
+                    log.warning(
+                        "Coverage: benefit '%s' uses unsupported operators %s — "
+                        "conditions with these operators will always evaluate to False",
+                        bid, b["unknown_operators"],
+                    )
+            summary = cov_report.get("summary", {})
+            log.info(
+                "✅ Coverage report: %d benefits, %.1f%% fully covered, "
+                "%d orphan rules, %d unknown operators",
+                summary.get("total_benefits", 0),
+                summary.get("coverage_pct", 0.0),
+                summary.get("benefits_with_orphan_rules", 0),
+                summary.get("benefits_with_unknown_operators", 0),
+            )
+        except Exception as e:
+            log.warning("Coverage monitor refresh failed: %s", e)
 
     fingerprint = SystemFingerprint.compute(settings)
     log.info(
@@ -447,6 +509,34 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
                 result_label = "eligible" if eligibility_result.get("eligible") else "not_eligible"
                 ELIGIBILITY_CHECKS.labels(benefit=benefit_id, result=result_label).inc()
                 log.info(f"[{request_id}] Eligibility: {result_label}")
+
+                # Coverage observability — track missing fields and unknown operators
+                for field in eligibility_result.get("missing_fields", []):
+                    MISSING_FIELD.labels(benefit=benefit_id, field=field).inc()
+                for op in eligibility_result.get("unknown_operators", []):
+                    UNKNOWN_OPERATOR.labels(operator=op, benefit=benefit_id).inc()
+                    log.warning(
+                        "[%s] Unknown operator '%s' in benefit '%s' — "
+                        "condition evaluated as False; update engine or policy graph",
+                        request_id, op, benefit_id,
+                    )
+
+                # Escalation trigger — no deterministic rules → always use top tier
+                if eligibility_result.get("no_rules"):
+                    if routing.get("tier") != "TIER_3":
+                        routing = {
+                            **routing,
+                            "tier": "TIER_3",
+                            "model": settings.llm_tier3_model,
+                            "escalated": True,
+                        }
+                        state.routing = routing
+                    NO_RULES_ESCALATION.labels(benefit=benefit_id).inc()
+                    log.warning(
+                        "[%s] No deterministic rules for benefit '%s' — "
+                        "escalated to TIER_3 for best-effort LLM response",
+                        request_id, benefit_id,
+                    )
 
         # ── Step 5: RAG Retrieval ──────────────────────────────────────────
         retrieval_result: Optional[RetrievalResult] = None
@@ -1062,6 +1152,34 @@ async def routing_stats():
     return await audit.get_routing_stats()
 
 
+@app.get("/api/governance/coverage")
+async def get_coverage(
+    refresh: bool = False,
+    role: str = Depends(require_role("security_officer")),
+):
+    """
+    Eligibility rule coverage report.
+
+    Shows per-benefit:
+      - total_rules / orphan_rules (rules with no conditions)
+      - operators used in the policy graph vs operators the engine supports
+      - fields required for deterministic evaluation
+      - coverage_complete flag
+
+    Use refresh=true to re-query Neo4j for an up-to-date snapshot.
+    """
+    if not coverage_monitor:
+        raise HTTPException(503, "Coverage monitor not initialized")
+    if refresh or not coverage_monitor.report:
+        report = await coverage_monitor.refresh()
+        # Update Prometheus gauges with fresh data
+        for b in report.get("benefits", []):
+            bid = b["benefit_id"]
+            COVERAGE_RULES_TOTAL.labels(benefit=bid).set(b["total_rules"])
+            COVERAGE_ORPHAN_RULES.labels(benefit=bid).set(b["orphan_rules"])
+    return coverage_monitor.report or {}
+
+
 # ── Network Boundary ──────────────────────────────────────────────────────────
 @app.get("/api/system/mode")
 async def system_mode():
@@ -1135,8 +1253,12 @@ async def _audit_request(
                 "criteria_met": eligibility_result.get("criteria_met", []),
                 "criteria_failed": eligibility_result.get("criteria_failed", []),
                 "missing_information": eligibility_result.get("missing_information", []),
+                "missing_fields": eligibility_result.get("missing_fields", []),
+                "unknown_operators": eligibility_result.get("unknown_operators", []),
+                "condition_results": eligibility_result.get("condition_results", []),
                 "legal_citations": eligibility_result.get("legal_citations", []),
                 "weekly_max_rate": eligibility_result.get("weekly_max_rate"),
+                "no_rules": eligibility_result.get("no_rules", False),
             }
 
         # Build policy_snapshot from Neo4j context
