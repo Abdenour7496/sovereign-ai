@@ -465,7 +465,7 @@ sovereign-ai/
 │   │   ├── crypto.py               # Fernet field-level encryption
 │   │   └── dual_control.py         # Two-person integrity for classified replay
 │   ├── governance/
-│   │   └── fingerprint.py          # Model config fingerprint (embedded per-request)
+│   │   └── fingerprint.py          # Five-dimension system fingerprint (embedded per-request)
 │   └── network/
 │       └── egress_monitor.py       # httpx transport: log or block all outbound calls
 ├── neo4j/seed/
@@ -516,7 +516,7 @@ sovereign-ai/
 
 2. **Hallucination guard** — If no authoritative source is found (Neo4j + Qdrant both empty for a query), the system refuses to speculate.
 
-3. **Full audit trail** — Every request is logged with: query hash, session ID, complexity score, tier, policy nodes accessed, document IDs retrieved, eligibility outcome, token usage, latency, and model fingerprint.
+3. **Full audit trail** — Every request is logged with: query hash, session ID, complexity score, tier, policy nodes accessed, document IDs retrieved, eligibility outcome, token usage, latency, and a five-dimension system fingerprint (model config, source integrity, policy graph hash, router thresholds, temporal anchor) enabling replay-perfect audit verification.
 
 4. **Graph-grounded responses** — The LLM receives structured rules from Neo4j as part of its prompt. It cannot invent eligibility thresholds.
 
@@ -536,7 +536,7 @@ Full control evidence for government security review is in `docs/`:
 
 | Document                         | Content                                          |
 |----------------------------------|--------------------------------------------------|
-| `AI_GOVERNANCE_CONTROLS.md`      | 26 controls across 8 domains with evidence endpoints |
+| `AI_GOVERNANCE_CONTROLS.md`      | 27 controls across 8 domains with evidence endpoints |
 | `THREAT_MODEL.md`                | Threat actors, attack vectors, mitigations       |
 | `DEPLOYMENT_SECURITY_ARCHITECTURE.md` | Network and container architecture          |
 | `MODEL_GOVERNANCE_POLICY.md`     | Model selection, version pinning, change control |
