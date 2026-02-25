@@ -44,7 +44,7 @@ from audit.dual_control import DualControlManager
 from audit.logger import AuditLogger
 from audit.security_scanner import ScanResult, scan as security_scan, query_hash as make_query_hash
 from config import settings
-from governance.fingerprint import ModelFingerprint
+from governance.fingerprint import SystemFingerprint
 from eligibility.engine import EligibilityEngine
 from llm.client import GenerationMetadata, LLMClient
 from network.egress_monitor import EgressBlockedError
@@ -116,7 +116,7 @@ rag: Optional[RAGRetriever] = None
 llm: Optional[LLMClient] = None
 eligibility: Optional[EligibilityEngine] = None
 audit: Optional[AuditLogger] = None
-fingerprint: Optional[ModelFingerprint] = None
+fingerprint: Optional[SystemFingerprint] = None
 dual_control: Optional[DualControlManager] = None
 chain_anchor: Optional[ChainAnchor] = None
 anomaly_detector: Optional[BehavioralAnomalyDetector] = None
@@ -156,6 +156,7 @@ async def lifespan(app: FastAPI):
         log.error(f"⚠️  Neo4j unavailable (policy graph disabled): {e}")
         policy_graph = None
 
+
     try:
         rag = RAGRetriever(settings)
         await rag.connect()
@@ -175,11 +176,31 @@ async def lifespan(app: FastAPI):
     eligibility = EligibilityEngine(policy_graph)
     log.info("✅ Deterministic eligibility engine ready")
 
-    fingerprint = ModelFingerprint.compute(settings)
+    fingerprint = SystemFingerprint.compute(settings)
     log.info(
-        f"✅ Model fingerprint computed — config_hash={fingerprint.config_hash[:16]}... "
-        f"secure_mode={fingerprint.secure_mode}"
+        "✅ System fingerprint computed — config_hash=%s... engine=%s... router=%s...",
+        fingerprint.config_hash[:16],
+        fingerprint.engine_source_hash[:16],
+        fingerprint.router_source_hash[:16],
     )
+
+    # Attach policy graph fingerprint now that Neo4j is (potentially) connected.
+    # This completes the five-dimension fingerprint required for replay-perfect audits.
+    if policy_graph:
+        try:
+            graph_hash, node_count = await policy_graph.compute_graph_fingerprint()
+            fingerprint.attach_policy_graph(graph_hash, node_count)
+            log.info(
+                "✅ Policy graph fingerprint attached — hash=%s... nodes=%d",
+                graph_hash[:16], node_count,
+            )
+        except Exception as e:
+            log.warning("Policy graph fingerprint failed (graph connected but query error): %s", e)
+    else:
+        log.warning(
+            "Policy graph fingerprint unavailable — Neo4j not connected. "
+            "Replay completeness: model-config level only."
+        )
     log.info(
         "Network mode: %s — %s",
         settings.mode.upper(),
@@ -757,10 +778,11 @@ async def replay_request(
         "latency_ms": entry.get("latency_ms"),
         "error_detail": entry.get("error_detail"),
         "integrity": {
-            "entry_hash": entry.get("entry_hash"),
+            "entry_hash":    entry.get("entry_hash"),
             "previous_hash": entry.get("previous_hash"),
-            "chain_valid": chain_status.get("valid"),
+            "chain_valid":   chain_status.get("valid"),
         },
+        "governance_meta": entry.get("governance_meta"),
     }
 
 
@@ -951,9 +973,9 @@ async def trigger_anchor_now(role: str = Depends(require_role("admin"))):
 # ── Model Governance API ──────────────────────────────────────────────────────
 @app.get("/api/governance/model-info")
 async def get_model_info(role: str = Depends(require_role("security_officer"))):
-    """Current model configuration and governance fingerprint."""
+    """Current system configuration and full governance fingerprint."""
     if not fingerprint:
-        raise HTTPException(503, "Model fingerprint not initialized")
+        raise HTTPException(503, "System fingerprint not initialized")
     if audit:
         await audit.log_security_event_direct(
             event_type="governance_model_info_accessed",
@@ -963,15 +985,13 @@ async def get_model_info(role: str = Depends(require_role("security_officer"))):
         )
     return {
         "fingerprint": fingerprint.to_dict(),
+        "replay_complete": fingerprint.is_replay_complete(),
         "models": {
             "tier1": settings.llm_tier1_model,
             "tier2": settings.llm_tier2_model,
             "tier3": settings.llm_tier3_model,
         },
-        "routing_thresholds": {
-            "tier1_max_score": settings.router_tier1_max_score,
-            "tier2_max_score": settings.router_tier2_max_score,
-        },
+        "routing_thresholds": fingerprint.router_thresholds,
         "effective_temperature": 0.0 if settings.secure_mode else settings.llm_temperature,
         "secure_mode": settings.secure_mode,
         "governance_policy": "docs/MODEL_GOVERNANCE_POLICY.md",
@@ -980,15 +1000,33 @@ async def get_model_info(role: str = Depends(require_role("security_officer"))):
 
 @app.get("/api/governance/config-snapshot")
 async def get_config_snapshot(role: str = Depends(require_role("security_officer"))):
-    """Point-in-time model config hash — compare across deployments to detect drift."""
+    """
+    Full point-in-time system fingerprint for replay verification.
+    Compare config_hash, engine_source_hash, router_source_hash, and
+    policy_graph_hash across deployments to detect any drift.
+    """
     if not fingerprint:
-        raise HTTPException(503, "Model fingerprint not initialized")
+        raise HTTPException(503, "System fingerprint not initialized")
     return {
-        "config_hash": fingerprint.config_hash,
-        "prompt_template_hash": fingerprint.prompt_template_hash,
-        "embedding_model": fingerprint.embedding_model,
-        "secure_mode": fingerprint.secure_mode,
-        "snapshot_time": datetime.utcnow().isoformat() + "Z",
+        # 1. Model config
+        "config_hash":           fingerprint.config_hash,
+        "prompt_template_hash":  fingerprint.prompt_template_hash,
+        "embedding_model":       fingerprint.embedding_model,
+        "secure_mode":           fingerprint.secure_mode,
+        # 2. Source integrity
+        "engine_source_hash":    fingerprint.engine_source_hash,
+        "router_source_hash":    fingerprint.router_source_hash,
+        # 3. Policy graph
+        "policy_graph_hash":     fingerprint.policy_graph_hash,
+        "policy_graph_node_count": fingerprint.policy_graph_node_count,
+        # 4. Router thresholds
+        "router_thresholds":     fingerprint.router_thresholds,
+        # 5. Temporal anchor
+        "startup_at":            fingerprint.startup_at,
+        "config_snapshot":       fingerprint.config_snapshot,
+        # Completeness flag
+        "replay_complete":       fingerprint.is_replay_complete(),
+        "snapshot_time":         datetime.utcnow().isoformat() + "Z",
     }
 
 

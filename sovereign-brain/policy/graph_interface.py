@@ -13,6 +13,8 @@ Graph Schema:
   (:EligibilityRule) -[:HAS_EXCEPTION]-> (:Exception)
 """
 
+import hashlib
+import json
 import logging
 from typing import Optional
 
@@ -162,6 +164,84 @@ class PolicyGraph:
             )
             record = await result.single()
             return dict(record) if record else {}
+
+    async def compute_graph_fingerprint(self) -> tuple[str, int]:
+        """
+        Compute a content-addressable fingerprint of the entire policy graph.
+        Returns (hash_hex, total_node_count).
+
+        Hash input is a deterministic JSON snapshot of:
+          - Node counts per label
+          - Relationship counts per type
+          - All Benefit IDs (sorted)
+          - All EligibilityRule IDs (sorted)
+          - All Condition IDs (sorted)
+          - All LegalClause references (sorted)
+
+        The hash changes whenever any policy node or relationship is added,
+        modified (id change), or removed — making it a reliable version signal
+        for deterministic replay validation.
+        """
+        async with self._driver.session() as session:
+            # Node counts by label
+            node_result = await session.run(
+                "MATCH (n) UNWIND labels(n) AS lbl "
+                "RETURN lbl AS label, count(n) AS cnt ORDER BY lbl"
+            )
+            node_counts = {r["label"]: r["cnt"] for r in await node_result.data()}
+
+            # Relationship counts by type
+            rel_result = await session.run(
+                "MATCH ()-[r]->() RETURN type(r) AS rel_type, count(r) AS cnt "
+                "ORDER BY rel_type"
+            )
+            rel_counts = {r["rel_type"]: r["cnt"] for r in await rel_result.data()}
+
+            # All Benefit IDs
+            benefit_result = await session.run(
+                "MATCH (b:Benefit) RETURN b.id AS id ORDER BY b.id"
+            )
+            benefit_ids = [r["id"] for r in await benefit_result.data()]
+
+            # All EligibilityRule IDs
+            rule_result = await session.run(
+                "MATCH (r:EligibilityRule) RETURN r.id AS id ORDER BY r.id"
+            )
+            rule_ids = [r["id"] for r in await rule_result.data()]
+
+            # All Condition IDs
+            cond_result = await session.run(
+                "MATCH (c:Condition) RETURN c.id AS id ORDER BY c.id"
+            )
+            condition_ids = [r["id"] for r in await cond_result.data()]
+
+            # All LegalClause references
+            clause_result = await session.run(
+                "MATCH (lc:LegalClause) RETURN lc.reference AS ref ORDER BY lc.reference"
+            )
+            clause_refs = [r["ref"] for r in await clause_result.data()]
+
+        total_nodes = sum(node_counts.values())
+
+        fingerprint_data = {
+            "node_counts":   node_counts,
+            "rel_counts":    rel_counts,
+            "benefit_ids":   benefit_ids,
+            "rule_ids":      rule_ids,
+            "condition_ids": condition_ids,
+            "clause_refs":   clause_refs,
+        }
+        graph_hash = hashlib.sha256(
+            json.dumps(fingerprint_data, sort_keys=True).encode()
+        ).hexdigest()
+
+        log.info(
+            "Policy graph fingerprint computed: hash=%s... nodes=%d "
+            "(benefits=%d rules=%d conditions=%d)",
+            graph_hash[:16], total_nodes,
+            len(benefit_ids), len(rule_ids), len(condition_ids),
+        )
+        return graph_hash, total_nodes
 
     # ── Private Methods ────────────────────────────────────────────────────
     async def _get_benefit(self, benefit_id: str) -> Optional[dict]:
