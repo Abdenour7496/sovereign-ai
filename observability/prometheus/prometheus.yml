@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: sovereign-ai-poc
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  # Sovereign Brain — Core metrics
+  - job_name: sovereign-brain
+    static_configs:
+      - targets: ['sovereign-brain:9100']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Neo4j metrics (if APOC metrics enabled)
+  - job_name: neo4j
+    static_configs:
+      - targets: ['neo4j:2004']
+    scrape_interval: 30s
+
+  # Qdrant metrics
+  - job_name: qdrant
+    static_configs:
+      - targets: ['qdrant:6333']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Postgres (via postgres_exporter if added later)
+  # - job_name: postgres
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']

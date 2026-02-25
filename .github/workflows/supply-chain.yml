@@ -1,0 +1,79 @@
+name: Supply Chain Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am — catch new CVEs on unchanged code
+
+permissions:
+  contents: read
+  id-token: write         # Required for keyless cosign OIDC signing
+  security-events: write  # Required for SARIF upload to GitHub Security tab
+
+jobs:
+  supply-chain:
+    name: Scan · SBOM · Sign
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build sovereign-brain image
+        run: docker compose build sovereign-brain
+
+      # ── Vulnerability Scanning ──────────────────────────────
+      - name: Scan with Trivy (table output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: sovereign-brain:latest
+          format: table
+          severity: HIGH,CRITICAL
+
+      - name: Scan with Trivy (SARIF — uploads to Security tab)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: sovereign-brain:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      # ── SBOM Generation ────────────────────────────────────
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: sovereign-brain:latest
+          format: cyclonedx-json
+          output-file: security-reports/sbom-cyclonedx.json
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: sovereign-brain:latest
+          format: spdx-json
+          output-file: security-reports/sbom-spdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: security-reports/
+          retention-days: 90
+
+      # ── Image Signing ──────────────────────────────────────
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless OIDC via GitHub Actions)
+        run: cosign sign --yes sovereign-brain:latest
+        env:
+          COSIGN_EXPERIMENTAL: "1"

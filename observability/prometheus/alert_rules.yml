@@ -1,0 +1,97 @@
+groups:
+  - name: sovereign_security
+    rules:
+
+      # ── Hash Chain Integrity ─────────────────────────────────────────────────
+      # Fires when verify-chain detects a broken hash chain in the audit log.
+      # A chain break indicates possible data tampering — requires immediate investigation.
+      - alert: AuditChainBreakDetected
+        expr: increase(sovereign_audit_chain_breaks_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Audit hash chain integrity violation detected"
+          description: >
+            The tamper-evident audit log hash chain has been broken.
+            This indicates possible data tampering or unauthorized DB modification.
+            Immediately run: GET /api/audit/verify-chain
+
+      # ── Jailbreak Attempts ───────────────────────────────────────────────────
+      # Fires when more than 3 jailbreak attempts are detected in 15 minutes.
+      # Indicates a coordinated attempt to bypass safety controls.
+      - alert: ExcessiveJailbreakAttempts
+        expr: sum(increase(sovereign_security_events_total{event_type="jailbreak_attempt"}[15m])) > 3
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Excessive jailbreak attempts detected"
+          description: '{{ $value | printf "%.0f" }} jailbreak attempts in the last 15 minutes. Review security events.'
+
+      # ── Cross-Boundary Access Spike ──────────────────────────────────────────
+      # Fires when more than 2 unauthorized audit access attempts occur in 15 minutes.
+      # Indicates possible credential stuffing or privilege escalation attempt.
+      - alert: CrossBoundaryAccessSpike
+        expr: sum(increase(sovereign_security_events_total{event_type="audit_unauthorized_access"}[15m])) > 2
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Cross-boundary access spike detected"
+          description: '{{ $value | printf "%.0f" }} unauthorized audit access attempts in 15 minutes.'
+
+      # ── Replay Endpoint Abuse ────────────────────────────────────────────────
+      # Fires when more than 10 replay requests occur in 10 minutes.
+      # High replay frequency suggests automated enumeration of audit entries.
+      - alert: ReplayEndpointAbuse
+        expr: sum(increase(sovereign_security_events_total{event_type="audit_replay_accessed"}[10m])) > 10
+        for: 0m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Replay endpoint abuse detected"
+          description: '{{ $value | printf "%.0f" }} replay requests in 10 minutes — possible enumeration attack.'
+
+      # ── Any Critical Security Event ──────────────────────────────────────────
+      # Fires immediately on any critical-severity security event.
+      # Covers: egress_attempt_blocked, jailbreak (critical tier), injection_via_code_block
+      - alert: CriticalSecurityEvent
+        expr: sum(increase(sovereign_security_events_total{severity="critical"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical security event detected"
+          description: "A critical severity security event was detected. Check the Grafana Security Dashboard."
+
+      # ── Egress Attempt While Airgapped ───────────────────────────────────────
+      # Fires when an outbound connection attempt is blocked in airgapped mode.
+      # Any value > 0 is a violation — the system should make zero outbound calls.
+      - alert: EgressAttemptWhileAirgapped
+        expr: sum(increase(sovereign_security_events_total{event_type="egress_attempt_blocked"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Egress attempt blocked in airgapped mode"
+          description: '{{ $value | printf "%.0f" }} outbound connection attempt(s) blocked. Verify airgap integrity: GET /api/system/mode'
+
+      # ── Behavioral Anomaly Detection ─────────────────────────────────────────
+      # Fires when any behavioral anomaly is detected within the last 15 minutes:
+      #   - Session volume spike (>30 queries/5min from same session)
+      #   - Unusual document targeting (>5 distinct benefit types/session/10min)
+      #   - Global pattern shift (5m rate >3x the 1h rolling average)
+      # Indicates automated enumeration, scraping, or coordinated access.
+      - alert: BehavioralAnomalyDetected
+        expr: sum(increase(sovereign_anomalies_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Behavioral anomaly detected"
+          description: >
+            Unusual query patterns detected: session volume spike, unusual document
+            targeting, or global pattern shift. Possible automated enumeration or
+            insider misuse. Check security events:
+            GET /api/audit/security-events (security_officer role required)

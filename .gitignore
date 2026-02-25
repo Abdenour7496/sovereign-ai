@@ -1,0 +1,19 @@
+# Secrets — never commit
+.env
+cosign.key
+cosign.pub
+*.pem
+*.key
+
+# Supply chain reports (generated artifacts)
+security-reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Chain anchor backup (runtime artifact)
+chain-anchors.jsonl

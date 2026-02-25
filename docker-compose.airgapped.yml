@@ -1,0 +1,47 @@
+# Sovereign AI — Airgapped Deployment Overlay
+#
+# Applies OS-level and application-level airgap enforcement in a single command.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.airgapped.yml up -d
+#
+# What this overlay does:
+#   1. Sets MODE=airgapped in sovereign-brain (application-level LLM block + audit logging)
+#   2. Marks sovereign-net as internal=true (removes Docker bridge gateway — no internet NAT)
+#   3. Clears ANTHROPIC_API_KEY (not needed in airgapped mode)
+#
+# Dual enforcement:
+#   Layer 1 — Application: sovereign-brain returns HTTP 503 for LLM calls; every
+#             attempt is logged to security_events as "egress_attempt_blocked"
+#   Layer 2 — Infrastructure: Docker removes the bridge gateway — even if application
+#             code tried to make an outbound call, the kernel would drop it
+#
+# How to verify airgap is active:
+#   curl http://localhost:8100/api/system/mode
+#       → {"mode":"airgapped","llm_available":false,"external_endpoints_blocked":true,...}
+#
+#   curl -H "X-Audit-Key: <admin>" http://localhost:8100/api/audit/security-events?limit=5
+#       → contains event_type="airgap_mode_active" at startup
+#
+#   docker network inspect sovereign-ai_sovereign-net | grep Internal
+#       → "Internal": true
+#
+#   docker exec sovereign-brain curl -s --max-time 2 https://api.anthropic.com 2>&1
+#       → "Could not resolve host" or "Network unreachable"
+#
+# To switch back to connected mode:
+#   docker compose -f docker-compose.yml up -d sovereign-brain
+
+version: "3.9"
+
+networks:
+  sovereign-net:
+    driver: bridge
+    internal: true    # Removes the Docker bridge gateway — no internet access from any container
+                      # Port bindings to the host (8100, 9100) remain functional
+
+services:
+  sovereign-brain:
+    environment:
+      MODE: airgapped
+      ANTHROPIC_API_KEY: ""   # Not required in airgapped mode

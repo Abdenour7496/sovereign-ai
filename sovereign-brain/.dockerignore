@@ -1,0 +1,28 @@
+# Secrets — must never enter an image layer
+.env
+.env.*
+.env.local
+cosign.key
+
+# Git history
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Development files
+tests/
+*.md
+Dockerfile
+.dockerignore
+
+# CI/tooling
+.github/
+security-reports/
+Makefile

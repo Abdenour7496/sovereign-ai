@@ -1,0 +1,16 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+anthropic==0.28.0
+neo4j==5.19.0
+qdrant-client==1.9.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+cryptography==42.0.5
+# fastembed: lightweight ONNX-based embedder — no PyTorch/CUDA dependency (~50MB vs 3GB)
+fastembed==0.3.6
+prometheus-client==0.20.0
+pydantic==2.7.1
+pydantic-settings==2.2.1
+httpx==0.27.0
+python-dotenv==1.0.1
+numpy==1.26.4
