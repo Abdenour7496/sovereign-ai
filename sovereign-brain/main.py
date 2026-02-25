@@ -108,6 +108,22 @@ AUDIT_CHAIN_BREAKS = Counter(
     "sovereign_audit_chain_breaks_total",
     "Audit hash chain integrity violations detected via verify-chain",
 )
+HYSTERESIS_APPLIED = Counter(
+    "sovereign_hysteresis_applied_total",
+    "Routing decisions modified by hysteresis boundary buffer",
+    ["tier"],
+)
+ESCALATION_LOCKED = Counter(
+    "sovereign_escalation_lock_total",
+    "Routing decisions held at session peak tier by escalation lock",
+    ["tier"],
+)
+
+# ── Session Peak Tier Registry ────────────────────────────────────────────────
+# In-memory per-session escalation lock. Maps session_id → highest tier seen.
+# Cleared on service restart (by design — sessions are per-deployment).
+_session_peak_tier: dict[str, str] = {}
+_TIER_ORDER_MAP = {"TIER_1": 1, "TIER_2": 2, "TIER_3": 3}
 
 # ── Global Service Instances ──────────────────────────────────────────────────
 router: Optional[ComplexityRouter] = None
@@ -382,10 +398,19 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
             )
 
         # ── Step 2: Complexity Routing ─────────────────────────────────────
-        routing = router.route(user_message, force_model=request.model)
+        session_peak = _session_peak_tier.get(session_id)
+        routing = router.route(
+            user_message,
+            force_model=request.model,
+            session_peak_tier=session_peak,
+        )
         # Secure mode: enforce minimum TIER_2 (no Haiku for official government outputs)
         if settings.secure_mode and routing.get("tier") == "TIER_1":
             routing = {**routing, "tier": "TIER_2", "model": settings.llm_tier2_model, "escalated": True}
+        # Update session peak tier (escalation lock state)
+        routed_tier = routing["tier"]
+        if _TIER_ORDER_MAP.get(routed_tier, 0) > _TIER_ORDER_MAP.get(_session_peak_tier.get(session_id, ""), 0):
+            _session_peak_tier[session_id] = routed_tier
         state.routing = routing
         log.info(
             f"[{request_id}] Routed → {routing['tier']} "
@@ -1178,11 +1203,13 @@ async def _audit_request(
 
 
 def _record_metrics(routing: dict, latency: float, gen_meta: Optional[GenerationMetadata] = None):
-    REQUEST_COUNT.labels(
-        tier=routing.get("tier", "UNKNOWN"),
-        escalated=str(routing.get("escalated", False)),
-    ).inc()
-    REQUEST_LATENCY.labels(tier=routing.get("tier", "UNKNOWN")).observe(latency)
+    tier = routing.get("tier", "UNKNOWN")
+    REQUEST_COUNT.labels(tier=tier, escalated=str(routing.get("escalated", False))).inc()
+    REQUEST_LATENCY.labels(tier=tier).observe(latency)
+    if routing.get("hysteresis_applied"):
+        HYSTERESIS_APPLIED.labels(tier=tier).inc()
+    if routing.get("escalation_locked"):
+        ESCALATION_LOCKED.labels(tier=tier).inc()
     if gen_meta:
         TOKEN_USAGE.labels(direction="input").inc(gen_meta.input_tokens)
         TOKEN_USAGE.labels(direction="output").inc(gen_meta.output_tokens)

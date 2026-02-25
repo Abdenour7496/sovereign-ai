@@ -92,15 +92,16 @@ class SystemFingerprint:
         Call attach_policy_graph() after Neo4j connects.
         """
         config_dict = {
-            "tier1_model":      settings.llm_tier1_model,
-            "tier2_model":      settings.llm_tier2_model,
-            "tier3_model":      settings.llm_tier3_model,
-            "temperature":      settings.llm_temperature,
-            "tier1_max_score":  settings.router_tier1_max_score,
-            "tier2_max_score":  settings.router_tier2_max_score,
-            "secure_mode":      settings.secure_mode,
-            "embedding_model":  settings.embedding_model,
-            "mode":             settings.mode,
+            "tier1_model":        settings.llm_tier1_model,
+            "tier2_model":        settings.llm_tier2_model,
+            "tier3_model":        settings.llm_tier3_model,
+            "temperature":        settings.llm_temperature,
+            "tier1_max_score":    settings.router_tier1_max_score,
+            "tier2_max_score":    settings.router_tier2_max_score,
+            "hysteresis_buffer":  getattr(settings, "router_hysteresis_buffer", 2),
+            "secure_mode":        settings.secure_mode,
+            "embedding_model":    settings.embedding_model,
+            "mode":               settings.mode,
         }
         config_hash = hashlib.sha256(
             json.dumps(config_dict, sort_keys=True).encode()
@@ -120,8 +121,9 @@ class SystemFingerprint:
             policy_graph_hash=None,
             policy_graph_node_count=0,
             router_thresholds={
-                "tier1_max": settings.router_tier1_max_score,
-                "tier2_max": settings.router_tier2_max_score,
+                "tier1_max":          settings.router_tier1_max_score,
+                "tier2_max":          settings.router_tier2_max_score,
+                "hysteresis_buffer":  getattr(settings, "router_hysteresis_buffer", 2),
             },
             startup_at=datetime.now(timezone.utc).isoformat(),
             config_snapshot=config_dict,

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # ── Routing Thresholds ────────────────────────────────────
     router_tier1_max_score: int = 20
     router_tier2_max_score: int = 45
+    # Hysteresis buffer: scores within ±buffer of a threshold boundary are
+    # sticky — they prefer the higher tier if the session was already there.
+    # E.g. buffer=2 → T1/T2 boundary zone is [18, 22]; T2/T3 is [43, 47].
+    router_hysteresis_buffer: int = 2
 
     # ── Neo4j ─────────────────────────────────────────────────
     neo4j_uri: str = "bolt://neo4j:7687"

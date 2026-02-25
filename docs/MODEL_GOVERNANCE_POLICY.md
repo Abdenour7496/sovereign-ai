@@ -44,6 +44,7 @@ Neo4j was unavailable at startup and policy graph identity could not be captured
 |------------|-------------------|--------------------------|
 | LLM model name change | Model config | `config_hash` |
 | Routing threshold adjustment | Model config + Router thresholds | `config_hash`, `router_thresholds` |
+| Hysteresis buffer adjustment | Model config + Router thresholds | `config_hash`, `router_thresholds` |
 | Embedding model change | Model config | `config_hash`, `embedding_model` |
 | System prompt modification | Model config | `config_hash`, `prompt_template_hash` |
 | Secure mode toggle | Model config | `config_hash`, `secure_mode` |

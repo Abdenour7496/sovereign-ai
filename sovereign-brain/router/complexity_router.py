@@ -8,10 +8,25 @@ Scores incoming queries and routes to the appropriate LLM tier:
 
 Scoring is fully deterministic and auditable — no ML, no black box.
 Every routing decision can be explained and traced.
+
+Threshold Stability
+-------------------
+Two mechanisms prevent routing jitter:
+
+1. Hysteresis buffer — scores within ±buffer of a tier boundary prefer the
+   higher tier if the session was already there.  With buffer=2:
+     T1/T2 zone [18, 22]: stays at TIER_2 if session peak is TIER_2+
+     T2/T3 zone [43, 47]: stays at TIER_3 if session peak is TIER_3
+
+2. Escalation lock — once a session reaches a tier, it never routes below
+   that tier for the remainder of the session (in-memory per service restart).
 """
 
 import re
 from typing import Optional
+
+# Numeric ordering for tier comparison
+_TIER_ORDER = {"TIER_1": 1, "TIER_2": 2, "TIER_3": 3}
 
 
 class ComplexityRouter:
@@ -86,11 +101,22 @@ class ComplexityRouter:
         self.settings = settings
         self.tier1_max = settings.router_tier1_max_score
         self.tier2_max = settings.router_tier2_max_score
+        self.hysteresis_buf = getattr(settings, "router_hysteresis_buffer", 2)
 
-    def route(self, query: str, force_model: Optional[str] = None) -> dict:
+    def route(
+        self,
+        query: str,
+        force_model: Optional[str] = None,
+        session_peak_tier: Optional[str] = None,
+    ) -> dict:
         """
         Compute complexity score and return routing decision.
-        If force_model is a tier-specific model name, skip scoring.
+
+        Args:
+            query: User message to score.
+            force_model: If a tier-specific model name, bypasses scoring.
+            session_peak_tier: Highest tier seen so far in this session.
+                               Enables hysteresis and escalation lock.
         """
         # Allow forcing a specific tier via model name
         forced = self._check_forced_tier(force_model)
@@ -99,22 +125,51 @@ class ComplexityRouter:
 
         score, breakdown = self._compute_score(query)
 
+        # ── Base tier from hard thresholds ────────────────────────────────
         if score < self.tier1_max:
             tier = "TIER_1"
-            model = self.settings.llm_tier1_model
         elif score < self.tier2_max:
             tier = "TIER_2"
-            model = self.settings.llm_tier2_model
         else:
             tier = "TIER_3"
-            model = self.settings.llm_tier3_model
+
+        hysteresis_applied = False
+        escalation_locked = False
+        buf = self.hysteresis_buf
+
+        # ── Hysteresis: boundary zones prefer the higher tier ──────────────
+        # T1/T2 zone: score within ±buf of tier1_max
+        in_t1_zone = abs(score - self.tier1_max) < buf
+        # T2/T3 zone: score within ±buf of tier2_max
+        in_t2_zone = abs(score - self.tier2_max) < buf
+
+        if in_t1_zone and _TIER_ORDER.get(session_peak_tier, 0) >= _TIER_ORDER["TIER_2"]:
+            tier = session_peak_tier  # type: ignore[assignment]
+            hysteresis_applied = True
+        elif in_t2_zone and _TIER_ORDER.get(session_peak_tier, 0) >= _TIER_ORDER["TIER_3"]:
+            tier = "TIER_3"
+            hysteresis_applied = True
+
+        # ── Escalation lock: never downgrade below session peak ────────────
+        if _TIER_ORDER.get(session_peak_tier, 0) > _TIER_ORDER.get(tier, 0):
+            tier = session_peak_tier  # type: ignore[assignment]
+            escalation_locked = True
+            hysteresis_applied = False  # lock is the operative reason
+
+        model_map = {
+            "TIER_1": self.settings.llm_tier1_model,
+            "TIER_2": self.settings.llm_tier2_model,
+            "TIER_3": self.settings.llm_tier3_model,
+        }
 
         return {
             "tier": tier,
-            "model": model,
+            "model": model_map[tier],
             "score": score,
             "score_breakdown": breakdown,
             "escalated": False,
+            "hysteresis_applied": hysteresis_applied,
+            "escalation_locked": escalation_locked,
         }
 
     def escalate(self, current_routing: dict) -> dict:
