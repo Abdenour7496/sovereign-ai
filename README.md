@@ -271,9 +271,43 @@ AUDIT_KEY_SECURITY_OFFICER=<key>
 AUDIT_KEY_AUDIT=<key>
 ```
 
-### Model Fingerprinting
+### System Fingerprinting (Replay-Perfect Audit)
 
-At startup, `ModelFingerprint` computes a SHA-256 hash of the current model configuration (tier models, thresholds, temperature, system prompt). This fingerprint is embedded in every `audit_log` row as `governance_meta`, providing proof that the AI configuration has not drifted between requests.
+At startup, `SystemFingerprint` captures five dimensions of the decision environment and embeds them in every `audit_log` row as `governance_meta` JSONB. All five must match to verify a deterministic replay:
+
+| Dimension | Field(s) | What it detects |
+|-----------|----------|-----------------|
+| **1. Model config** | `config_hash` | Tier model / temperature / mode drift |
+| **2. Source integrity** | `engine_source_hash` | Changes to `eligibility/engine.py` evaluation logic |
+| **2. Source integrity** | `router_source_hash` | Changes to `router/complexity_router.py` routing logic |
+| **3. Policy graph** | `policy_graph_hash` | Any added/modified/removed Benefit, Rule, or Condition in Neo4j |
+| **3. Policy graph** | `policy_graph_node_count` | Total node count at startup |
+| **4. Router thresholds** | `router_thresholds` | Explicit tier boundary values (human-readable) |
+| **5. Temporal anchor** | `startup_at`, `config_snapshot` | Full config state at exact deployment time |
+
+`policy_graph_hash` is computed by querying all Benefit/EligibilityRule/Condition/LegalClause IDs and node/relationship counts from Neo4j and hashing them deterministically. It changes automatically whenever policy content changes — no manual version bumping required.
+
+`SystemFingerprint.is_replay_complete()` returns `false` when Neo4j was unavailable at startup; those audit entries are flagged as model-config level only.
+
+**Verification endpoints:**
+```bash
+# Full five-dimension snapshot
+curl -H "X-Audit-Key: <security_officer>" http://localhost:8100/api/governance/config-snapshot
+
+# See the fingerprint embedded in a specific past request
+curl -H "X-Audit-Key: <auditor>" http://localhost:8100/api/audit/replay/<request_id>
+```
+
+**SQL replay analysis** (migration 06):
+```sql
+-- All requests grouped by their exact policy graph version
+SELECT policy_graph_hash, count(*), min(created_at), max(created_at)
+FROM governance_fingerprint_log
+GROUP BY policy_graph_hash ORDER BY min(created_at) DESC;
+
+-- Deployments where replay is incomplete (Neo4j was unavailable at startup)
+SELECT * FROM replay_completeness_summary WHERE replay_complete = false;
+```
 
 ---
 
@@ -445,7 +479,8 @@ sovereign-ai/
 │       ├── 02_audit_enhancement.sql    # Session/IP/hash columns + security_events table
 │       ├── 03_audit_immutability.sql   # Immutability enforcement
 │       ├── 04_field_encryption.sql     # Field encryption schema
-│       └── 05_model_governance.sql     # Model governance schema
+│       ├── 05_model_governance.sql     # Model governance schema
+│       └── 06_policy_fingerprint.sql   # governance_meta views + expression indexes
 ├── observability/
 │   ├── prometheus/
 │   │   ├── prometheus.yml

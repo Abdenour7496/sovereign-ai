@@ -23,7 +23,7 @@ This document provides a structured inventory of all AI governance controls impl
 | Domain | Controls |
 |--------|----------|
 | [AI-BOUND] AI Boundary Enforcement | AI-BOUND-001 through AI-BOUND-004 |
-| [AUDIT] Tamper-Evident Audit Logging | AUDIT-001 through AUDIT-005 |
+| [AUDIT] Tamper-Evident Audit Logging | AUDIT-001 through AUDIT-006 |
 | [ACCESS] Access Control & Identity | ACCESS-001 through ACCESS-004 |
 | [NET] Network Boundary Controls | NET-001 through NET-004 |
 | [ROUTE] Model Routing & Resource Governance | ROUTE-001 through ROUTE-003 |
@@ -91,9 +91,9 @@ This document provides a structured inventory of all AI governance controls impl
 
 | Field | Value |
 |-------|-------|
-| **Description** | Any individual audit entry can be retrieved and replayed in full — including the original query, response, policy references, and security context — to facilitate incident investigation. |
-| **Enforcement Mechanism** | `sovereign-brain/main.py` — `GET /api/audit/replay/{entry_id}` reconstructs full interaction from stored fields. Access is logged as `audit_replay_accessed` security event. |
-| **Evidence Endpoint** | `GET /api/audit/replay/{entry_id}` (requires auditor key or higher). Replay access is automatically logged: `GET /api/audit/security-events?event_type=audit_replay_accessed`. |
+| **Description** | Any individual audit entry can be retrieved and replayed in full — including the original query, response, policy references, security context, and full five-dimension system fingerprint — to facilitate incident investigation. |
+| **Enforcement Mechanism** | `sovereign-brain/main.py` — `GET /api/audit/replay/{entry_id}` reconstructs full interaction from stored fields including `governance_meta` (the embedded system fingerprint). Access is logged as `audit_replay_accessed` security event. |
+| **Evidence Endpoint** | `GET /api/audit/replay/{entry_id}` (requires auditor key or higher) — response includes `governance_meta` with all five fingerprint dimensions. Replay access is automatically logged: `GET /api/audit/security-events?event_type=audit_replay_accessed`. |
 
 ### AUDIT-004: Field-Level Encryption
 
@@ -110,6 +110,14 @@ This document provides a structured inventory of all AI governance controls impl
 | **Description** | Hash chain verification is exposed as an API endpoint and produces a Prometheus counter that immediately triggers a critical alert if any break is detected. |
 | **Enforcement Mechanism** | `sovereign-brain/main.py` — `AUDIT_CHAIN_BREAKS` counter incremented in `verify_audit_chain()` when chain validation fails. Prometheus alert rule `AuditChainBreakDetected` fires within 0 minutes of first break. |
 | **Evidence Endpoint** | `curl http://localhost:9100/metrics | grep sovereign_audit_chain_breaks` — should read `0` in a healthy system. Prometheus UI at `:9090/alerts` shows alert status. |
+
+### AUDIT-006: Five-Dimension System Fingerprint (Deterministic Replay Completeness)
+
+| Field | Value |
+|-------|-------|
+| **Description** | Every audit record embeds a five-dimension system fingerprint in `governance_meta` JSONB. This captures the complete decision environment at the time of each request: model config, source code integrity, policy graph state, router thresholds, and a temporal anchor. Together they enable replay-perfect audit verification — an auditor can confirm that a replayed request would have encountered exactly the same models, code, policy rules, and thresholds as the original. |
+| **Enforcement Mechanism** | `sovereign-brain/governance/fingerprint.py` — `SystemFingerprint.compute(settings)` captures dimensions 1, 2, 4, and 5 synchronously at startup. `PolicyGraph.compute_graph_fingerprint()` computes dimension 3 by querying all Benefit/EligibilityRule/Condition/LegalClause IDs and node counts from Neo4j, then SHA-256 hashing the result deterministically. `SystemFingerprint.attach_policy_graph()` is called from the lifespan startup sequence after Neo4j connects. `is_replay_complete()` returns `false` if Neo4j was unavailable. Migration `06_policy_fingerprint.sql` creates `governance_fingerprint_log` VIEW and `replay_completeness_summary` VIEW for SQL-level replay analysis. |
+| **Evidence Endpoint** | `GET /api/governance/config-snapshot` (security_officer role) — returns all five dimension hashes including `policy_graph_hash` and `replay_complete` flag. `GET /api/audit/replay/{id}` — response includes `governance_meta` with the full fingerprint for that specific request. SQL: `SELECT * FROM replay_completeness_summary;` — groups requests by unique deployment fingerprint and flags any incomplete entries. |
 
 ---
 
@@ -302,6 +310,7 @@ All alert rules are defined in `observability/prometheus/alert_rules.yml` and lo
 | AUDIT-003 | Audit | Application (Replay API) | Unverifiable incident response |
 | AUDIT-004 | Audit | Application (Encryption) | Data exposure at rest |
 | AUDIT-005 | Audit | Application + Prometheus | Undetected tampering |
+| AUDIT-006 | Audit | Application (5-dim fingerprint) | Incomplete replay / config drift |
 | ACCESS-001 | Access Control | Application (RBAC) | Unauthorised audit access |
 | ACCESS-002 | Access Control | Application (Config) | Misconfigured dev exposure |
 | ACCESS-003 | Access Control | Application (CORS) | Cross-origin attack surface |
