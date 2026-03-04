@@ -14,11 +14,11 @@ Citizen (OpenWebUI)
 Sovereign Brain (FastAPI :8100)
     ├── Security Scanner              → prompt injection / jailbreak detection (17 pattern categories)
     ├── Deterministic Complexity Router
-    │       └── Routes to Claude Haiku / Sonnet / Opus
+    │       └── Routes to Tier 1 / Tier 2 / Tier 3 model (multi-provider)
     ├── Policy Graph Interface
     │       └── Neo4j → structured eligibility rules + legal clauses
     ├── RAG Retriever
-    │       └── Qdrant → policy document grounding
+    │       └── Qdrant → policy document grounding (fastembed BAAI/bge-small-en-v1.5)
     ├── Eligibility Engine
     │       └── Deterministic pass/fail — no LLM in this path
     ├── Egress Monitor Transport
@@ -33,16 +33,18 @@ Sovereign Brain (FastAPI :8100)
 ```
 
 **LLM Tier Routing (Deterministic)**
-| Score  | Tier   | Model             | Typical Query Type          |
-|--------|--------|-------------------|-----------------------------|
-| < 20   | TIER_1 | Claude Haiku      | "What is Income Support?"   |
-| 20–45  | TIER_2 | Claude Sonnet     | "Am I eligible if I earn $400/week?" |
-| ≥ 45   | TIER_3 | Claude Opus       | Complex cross-policy queries |
+| Score  | Tier   | Default Model         | Typical Query Type                    |
+|--------|--------|-----------------------|---------------------------------------|
+| < 20   | TIER_1 | Claude Haiku 4.5      | "What is Income Support?"             |
+| 20–45  | TIER_2 | Claude Sonnet 4.6     | "Am I eligible if I earn $400/week?"  |
+| ≥ 45   | TIER_3 | Claude Sonnet 4.6     | Complex cross-policy queries          |
+
+Each tier's provider and model are independently configurable via environment variables — see [Multi-Provider LLM](#multi-provider-llm) below.
 
 **Deployment Modes**
 | Mode        | LLM Available | External Network | Use Case                        |
 |-------------|---------------|------------------|---------------------------------|
-| `connected` | Yes           | api.anthropic.com only | Standard operation        |
+| `connected` | Yes           | Configured provider API only | Standard operation  |
 | `airgapped` | No (HTTP 503) | Fully blocked (app + Docker) | Classified/offline environments |
 
 ---
@@ -51,12 +53,13 @@ Sovereign Brain (FastAPI :8100)
 
 ### 1. Prerequisites
 - Docker Desktop running
-- Anthropic API key
+- API key for your chosen LLM provider (Anthropic, OpenAI, Groq, etc.)
 
 ### 2. Configure Environment
 ```bash
 cp .env.example .env
-# Edit .env — add your ANTHROPIC_API_KEY
+# Edit .env — set your provider keys (e.g. ANTHROPIC_API_KEY)
+# Defaults use Anthropic with Claude Haiku/Sonnet — just set ANTHROPIC_API_KEY to start
 ```
 
 ### 3. Start the Stack
@@ -64,11 +67,11 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Wait ~60 seconds for all services to initialise.
+Wait ~60 seconds for all services to initialise. **Database migrations run automatically** on first start.
 
 ### 4. Seed Knowledge Bases
 ```bash
-pip install neo4j qdrant-client sentence-transformers psycopg2-binary
+pip install neo4j qdrant-client fastembed
 python scripts/seed_all.py
 ```
 
@@ -117,6 +120,59 @@ curl -X POST http://localhost:8100/v1/chat/completions \
 
 ---
 
+## Multi-Provider LLM
+
+Each routing tier can use a different LLM provider. Set in `.env` or docker-compose environment:
+
+```bash
+# Provider selection (per tier)
+LLM_TIER1_PROVIDER=anthropic    # or: openai | gemini | groq | openrouter | ollama | custom
+LLM_TIER2_PROVIDER=anthropic
+LLM_TIER3_PROVIDER=anthropic
+
+# Model names (provider-specific syntax)
+LLM_TIER1_MODEL=claude-haiku-4-5-20251001
+LLM_TIER2_MODEL=claude-sonnet-4-6
+LLM_TIER3_MODEL=claude-sonnet-4-6
+
+# API keys (set only the providers you use)
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+GROQ_API_KEY=...
+OPENROUTER_API_KEY=...
+
+# For Ollama (self-hosted)
+OLLAMA_BASE_URL=http://ollama:11434/v1
+
+# For any OpenAI-compatible endpoint
+CUSTOM_LLM_BASE_URL=https://your-endpoint/v1
+CUSTOM_LLM_API_KEY=...
+```
+
+Mix providers freely across tiers — e.g. Groq for Tier 1 (fast/cheap), Anthropic for Tier 3 (accurate):
+```bash
+LLM_TIER1_PROVIDER=groq     LLM_TIER1_MODEL=llama-3.1-8b-instant
+LLM_TIER2_PROVIDER=anthropic LLM_TIER2_MODEL=claude-haiku-4-5-20251001
+LLM_TIER3_PROVIDER=anthropic LLM_TIER3_MODEL=claude-sonnet-4-6
+```
+
+---
+
+## Routing Thresholds
+
+Tier boundaries and hysteresis buffer are tunable without code changes:
+
+```bash
+ROUTER_TIER1_MAX_SCORE=20    # score < 20  → TIER_1
+ROUTER_TIER2_MAX_SCORE=45    # score < 45  → TIER_2, else TIER_3
+ROUTER_HYSTERESIS_BUFFER=2   # ±2 buffer around each boundary (sticky escalation)
+```
+
+The hysteresis buffer prevents rapid tier oscillation: a session that has reached TIER_2 stays there for scores in [18, 22] rather than bouncing back to TIER_1.
+
+---
+
 ## Airgapped Deployment
 
 For classified or offline environments, apply the airgap overlay:
@@ -128,6 +184,8 @@ docker compose -f docker-compose.yml -f docker-compose.airgapped.yml up -d
 This enforces a dual-layer network block:
 - **Layer 1 — Application:** `EgressMonitorTransport` raises `EgressBlockedError` before any socket opens; every attempt is logged as `egress_attempt_blocked` in the security audit chain.
 - **Layer 2 — Infrastructure:** Docker `internal: true` removes the bridge NAT gateway — even a compromised process cannot reach the internet.
+
+The deterministic eligibility engine remains fully operational in airgapped mode — citizens receive factual pass/fail determinations without any LLM involvement.
 
 **Verify airgap is active:**
 ```bash
@@ -158,7 +216,7 @@ docker compose -f docker-compose.yml up -d sovereign-brain
 | Neo4j Browser         | http://localhost:7474         | Policy graph explorer                    |
 | Qdrant                | http://localhost:6333         | Vector DB dashboard                      |
 | Prometheus            | http://localhost:9090         | Metrics + alert rules                    |
-| Grafana               | http://localhost:3001         | Dashboards (admin/sovereign2024)         |
+| Grafana               | http://localhost:3001         | Dashboards (admin / sovereign2026)       |
 | Prometheus Metrics    | http://localhost:9100/metrics | Raw sovereign-brain metrics              |
 
 ---
@@ -184,7 +242,7 @@ Detected events are logged to the independent `security_events` hash chain. Quer
 
 ### Tamper-Evident Audit Logging
 
-Every record contains a SHA-256 hash of the previous record, forming a cryptographic chain. The main interaction log and the security event log maintain independent chains.
+Every record contains a SHA-256 hash of the previous record, forming a cryptographic chain. The main interaction log and the security event log maintain independent chains. Concurrent inserts serialize on the chain tail via `SELECT ... FOR UPDATE` to guarantee chain continuity.
 
 **Verify chain integrity:**
 ```bash
@@ -231,16 +289,19 @@ Accessing `critical` or `high` severity security events requires two-person inte
 
 ### Field-Level Encryption
 
-When `FIELD_ENCRYPTION_KEY` is set, `query_text` and `response_text` in the audit log are encrypted at rest using Fernet (AES-128-CBC + HMAC-SHA256). Key rotation is supported by passing a comma-separated list.
+When `FIELD_ENCRYPTION_KEY` is set, `query_text` and `response_text` in the audit log are encrypted at rest using Fernet (AES-128-CBC + HMAC-SHA256). Key rotation is supported by passing a comma-separated list. The key is validated at service startup — an invalid key fails fast before any connections are opened.
 
 ```bash
 # Generate a new key
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Key rotation (prepend new key, keep old key for decryption)
+FIELD_ENCRYPTION_KEY=<new_key>,<old_key>
 ```
 
 ### Egress Monitoring
 
-`EgressMonitorTransport` wraps the Anthropic SDK's `httpx.AsyncClient`. Every outbound call is intercepted before any socket is opened:
+`EgressMonitorTransport` wraps the LLM SDK's `httpx.AsyncClient`. Every outbound call is intercepted before any socket is opened:
 
 - **Connected mode:** logs `egress_request_sent` with host, path, method
 - **Airgapped mode:** raises `EgressBlockedError`, logs `egress_attempt_blocked` (severity: critical)
@@ -330,7 +391,7 @@ View active alerts: http://localhost:9090/alerts
 
 ## Grafana Dashboards
 
-Two pre-built dashboards at http://localhost:3001 (admin / sovereign2024):
+Two pre-built dashboards at http://localhost:3001 (admin / sovereign2026):
 
 | Dashboard                  | Content                                                        |
 |----------------------------|----------------------------------------------------------------|
@@ -371,13 +432,13 @@ cosign verify sovereign-brain:latest --key cosign.pub
 
 ## Example Conversations
 
-**Simple query → Tier 1 (Haiku)**
+**Simple query → Tier 1 (fast model)**
 > "What is Income Support?"
 
-**Medium query → Tier 2 (Sonnet)**
+**Medium query → Tier 2 (balanced model)**
 > "I'm 35, Australian citizen, unemployed for 2 months, earning $400/week from savings. Can I get income support?"
 
-**Complex query → Tier 3 (Opus)**
+**Complex query → Tier 3 (powerful model)**
 > "If I'm caring for my elderly mother who has a medical condition scoring 35 on the ADAT, and I work 20 hours a week earning $800/week — can I claim both Carer Payment and Income Support? What are the combined income thresholds and how does the assets test apply?"
 
 ---
@@ -386,7 +447,7 @@ cosign verify sovereign-brain:latest --key cosign.pub
 
 Connect to the browser at http://localhost:7474 with:
 - Username: `neo4j`
-- Password: `sovereign2024`
+- Password: `sovereign2026` (or `NEO4J_PASSWORD` from your `.env`)
 
 Explore the graph:
 ```cypher
@@ -426,13 +487,7 @@ docker exec -it sovereign-postgres psql -U sovereign -d sovereign_audit \
   -c "SELECT event_type, severity, count(*) FROM security_events GROUP BY 1,2 ORDER BY 3 DESC;"
 ```
 
-Apply schema migrations after first run:
-```bash
-for f in postgres/migrations/*.sql; do
-  docker cp "$f" sovereign-postgres:/tmp/migration.sql
-  docker exec sovereign-postgres psql -U sovereign -d sovereign_audit -f /tmp/migration.sql
-done
-```
+> **Note:** Migrations `02`–`08` are applied automatically on first container start via `postgres/init/99_run_migrations.sh`. No manual migration steps are required for a fresh deployment.
 
 ---
 
@@ -446,17 +501,22 @@ sovereign-ai/
 ├── Makefile                        # Build, scan, SBOM, sign targets
 ├── sovereign-brain/                # Core orchestration service (FastAPI)
 │   ├── main.py                     # API + pipeline orchestration
-│   ├── config.py                   # Settings (mode, secure_mode, encryption keys)
+│   ├── config.py                   # Settings (providers, mode, secure_mode, encryption keys)
 │   ├── router/
 │   │   └── complexity_router.py    # Deterministic Tier 1/2/3 routing
 │   ├── policy/
 │   │   └── graph_interface.py      # Neo4j query interface
 │   ├── eligibility/
-│   │   └── engine.py               # Deterministic eligibility evaluation
+│   │   ├── engine.py               # Deterministic eligibility evaluation
+│   │   └── coverage.py             # Rule coverage monitor
 │   ├── rag/
-│   │   └── retriever.py            # Qdrant vector search
+│   │   └── retriever.py            # Qdrant vector search (fastembed BAAI/bge-small-en-v1.5)
 │   ├── llm/
-│   │   └── client.py               # Multi-tier Claude API client (airgap-aware)
+│   │   ├── client.py               # Multi-tier, multi-provider LLM dispatcher
+│   │   └── providers/
+│   │       ├── base.py             # Abstract provider interface
+│   │       ├── anthropic_provider.py  # Native Anthropic SDK
+│   │       └── openai_compat.py    # OpenAI-compatible (Groq, OpenRouter, Gemini, Ollama, custom)
 │   ├── audit/
 │   │   ├── logger.py               # Postgres hash-chained audit trail
 │   │   ├── security_scanner.py     # Prompt injection / jailbreak detection
@@ -474,13 +534,16 @@ sovereign-ai/
 │   └── seed_documents.py           # 7 authoritative policy documents
 ├── postgres/
 │   ├── init/
-│   │   └── 01_audit_schema.sql     # Base audit schema + views
+│   │   ├── 01_audit_schema.sql     # Base audit schema + views
+│   │   └── 99_run_migrations.sh    # Auto-applies all migrations/ on first start
 │   └── migrations/
 │       ├── 02_audit_enhancement.sql    # Session/IP/hash columns + security_events table
 │       ├── 03_audit_immutability.sql   # Immutability enforcement
 │       ├── 04_field_encryption.sql     # Field encryption schema
 │       ├── 05_model_governance.sql     # Model governance schema
-│       └── 06_policy_fingerprint.sql   # governance_meta views + expression indexes
+│       ├── 06_policy_fingerprint.sql   # governance_meta views + expression indexes
+│       ├── 07_routing_percentiles.sql  # Routing percentile views
+│       └── 08_coverage_heatmap.sql     # Coverage heatmap views
 ├── observability/
 │   ├── prometheus/
 │   │   ├── prometheus.yml
@@ -520,13 +583,15 @@ sovereign-ai/
 
 4. **Graph-grounded responses** — The LLM receives structured rules from Neo4j as part of its prompt. It cannot invent eligibility thresholds.
 
-5. **Tiered intelligence** — Simple queries use Haiku (fast, cheap). Complex queries escalate to Sonnet/Opus. GPU not required for PoC.
+5. **Tiered intelligence** — Simple queries use the Tier 1 model (fast, cheap). Complex queries escalate to Tier 2/3. GPU not required for PoC.
 
 6. **Tamper-evident by construction** — Every audit row includes a hash of the previous row. Chain integrity is verifiable on demand and anchored hourly to an RFC 3161 timestamp authority.
 
 7. **Defence in depth** — Security controls operate at four layers: application, audit chain, Docker network, and OS user privilege.
 
 8. **Airgap-ready** — The full deterministic eligibility pipeline operates without any LLM or internet access. Airgap mode is one compose overlay away.
+
+9. **Provider-agnostic** — Any OpenAI-compatible endpoint or the native Anthropic SDK can back any tier. Switch providers without changing application code.
 
 ---
 
@@ -551,7 +616,8 @@ Full control evidence for government security review is in `docs/`:
 - [ ] Age Pension + Family Payment benefits
 - [ ] PII scrubbing / pseudonymisation in audit logs
 - [ ] K3s HA cluster deployment manifests (3-node)
-- [ ] vLLM local model serving (remove Claude API dependency)
+- [ ] vLLM local model serving (remove cloud LLM dependency)
+- [ ] Redis-backed session state (required for multi-worker / multi-replica scaling)
 - [ ] OpenTelemetry distributed tracing (Tempo)
 - [ ] Neo4j causal cluster (3-node HA)
 - [ ] Policy versioning (`valid_from` / `valid_to` on all nodes)

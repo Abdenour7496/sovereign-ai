@@ -10,7 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --timeout 300 --retries 5 -r requirements.txt
+
+# Pre-download the fastembed ONNX model at build time (~50MB).
+# Avoids a 30-60s cold-start delay on the first request in production.
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 # Run as non-root — principle of least privilege
 RUN useradd --system --uid 1001 --no-create-home sovereign

@@ -69,6 +69,9 @@ class AuditLogger:
 
     async def ensure_schema(self):
         """Create tables if they don't exist (idempotent)."""
+        if not self._pool:
+            log.warning("Audit logger not connected — skipping schema setup")
+            return
         async with self._pool.acquire() as conn:
             await conn.execute(_SCHEMA_SQL)
 
@@ -142,7 +145,7 @@ class AuditLogger:
             async with self._pool.acquire() as conn:
                 async with conn.transaction():
                     row = await conn.fetchrow(
-                        "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1 FOR UPDATE SKIP LOCKED"
+                        "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1 FOR UPDATE"
                     )
                     previous_hash = (row["entry_hash"] if row and row["entry_hash"] else GENESIS_HASH)
                     entry_hash = _compute_hash(entry_data, previous_hash)
@@ -200,7 +203,7 @@ class AuditLogger:
                     for event in events:
                         row = await conn.fetchrow(
                             "SELECT entry_hash FROM security_events "
-                            "ORDER BY id DESC LIMIT 1 FOR UPDATE SKIP LOCKED"
+                            "ORDER BY id DESC LIMIT 1 FOR UPDATE"
                         )
                         previous_hash = (row["entry_hash"] if row and row["entry_hash"] else GENESIS_HASH)
 

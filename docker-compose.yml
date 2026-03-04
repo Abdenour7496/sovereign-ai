@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Sovereign AI Infrastructure - Proof of Concept
 # Benefits Eligibility Vertical Slice
 # Model Routing: Claude Haiku (simple) → Sonnet (medium) → Opus (complex)
@@ -36,11 +34,25 @@ services:
       - "8100:8100"      # OpenAI-compatible API (add to OpenWebUI)
       - "9100:9100"      # Prometheus metrics
     environment:
-      # LLM Backend (Claude API — model tiers)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      LLM_TIER1_MODEL: claude-haiku-4-5-20251001
-      LLM_TIER2_MODEL: claude-sonnet-4-6
-      LLM_TIER3_MODEL: claude-sonnet-4-6
+      # ── LLM — Provider selection (one per tier) ──────────────────────────────
+      # Valid: anthropic | openai | gemini | groq | openrouter | ollama | custom
+      LLM_TIER1_PROVIDER: ${LLM_TIER1_PROVIDER:-anthropic}
+      LLM_TIER2_PROVIDER: ${LLM_TIER2_PROVIDER:-anthropic}
+      LLM_TIER3_PROVIDER: ${LLM_TIER3_PROVIDER:-anthropic}
+      # ── LLM — Model names (provider-specific) ───────────────────────────────
+      LLM_TIER1_MODEL: ${LLM_TIER1_MODEL:-claude-haiku-4-5-20251001}
+      LLM_TIER2_MODEL: ${LLM_TIER2_MODEL:-claude-sonnet-4-6}
+      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-claude-sonnet-4-6}
+      # ── LLM — API keys (only set keys for providers you use) ────────────────
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # ── LLM — Base URLs (override defaults if needed) ───────────────────────
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434/v1}
+      CUSTOM_LLM_BASE_URL: ${CUSTOM_LLM_BASE_URL:-}
+      CUSTOM_LLM_API_KEY: ${CUSTOM_LLM_API_KEY:-}
       # Neo4j
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
@@ -61,8 +73,9 @@ services:
       METRICS_PORT: 9100
       LOG_LEVEL: INFO
       # Routing thresholds
-      ROUTER_TIER1_MAX_SCORE: 20
-      ROUTER_TIER2_MAX_SCORE: 45
+      ROUTER_TIER1_MAX_SCORE: ${ROUTER_TIER1_MAX_SCORE:-20}
+      ROUTER_TIER2_MAX_SCORE: ${ROUTER_TIER2_MAX_SCORE:-45}
+      ROUTER_HYSTERESIS_BUFFER: ${ROUTER_HYSTERESIS_BUFFER:-2}
       # Audit access control — RBAC keys (empty = dev mode, no auth)
       AUDIT_API_KEY: ${AUDIT_API_KEY:-}
       AUDIT_KEY_AUDITOR: ${AUDIT_KEY_AUDITOR:-}
@@ -156,6 +169,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
+      - ./postgres/migrations:/docker-entrypoint-migrations:ro
     security_opt:
       - "no-new-privileges:true"
     networks:

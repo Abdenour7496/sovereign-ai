@@ -1,9 +1,12 @@
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
-anthropic==0.28.0
+# anthropic: must be >=0.40.0 for Claude 4.x model support (haiku-4-5, sonnet-4-6, opus-4-6)
+anthropic>=0.40.0
+# OpenAI-compatible provider (also covers Groq, OpenRouter, Ollama, Gemini)
+openai>=1.35.0
 neo4j==5.19.0
 qdrant-client==1.9.1
-psycopg2-binary==2.9.9
+# asyncpg handles all Postgres I/O — psycopg2 is not used
 asyncpg==0.29.0
 cryptography==42.0.5
 # fastembed: lightweight ONNX-based embedder — no PyTorch/CUDA dependency (~50MB vs 3GB)

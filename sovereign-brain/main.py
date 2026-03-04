@@ -172,6 +172,20 @@ async def lifespan(app: FastAPI):
     global router, policy_graph, rag, llm, eligibility, audit, fingerprint, dual_control, chain_anchor, anomaly_detector
     log.info("🚀 Sovereign Brain starting up...")
 
+    # Validate FIELD_ENCRYPTION_KEY early — an invalid key causes silent encrypt failures later.
+    if settings.field_encryption_key:
+        try:
+            from cryptography.fernet import Fernet
+            for raw_key in settings.field_encryption_key.split(","):
+                Fernet(raw_key.strip().encode())
+            log.info("Field encryption key(s) validated.")
+        except Exception as exc:
+            raise ValueError(
+                f"FIELD_ENCRYPTION_KEY is invalid: {exc}. "
+                "Generate a valid key with: "
+                "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            ) from exc
+
     try:
         start_http_server(settings.metrics_port)
         log.info(f"📊 Prometheus metrics on :{settings.metrics_port}")
@@ -283,6 +297,11 @@ async def lifespan(app: FastAPI):
         "Network mode: %s — %s",
         settings.mode.upper(),
         "LLM API BLOCKED" if settings.mode == "airgapped" else "LLM API enabled",
+    )
+    log.warning(
+        "Session escalation state (_session_peak_tier) is in-memory only. "
+        "Container restarts reset all escalation locks. "
+        "For multi-worker or multi-replica deployments, use Redis-backed session state."
     )
     if audit and settings.mode == "airgapped":
         await audit.log_security_event_direct(

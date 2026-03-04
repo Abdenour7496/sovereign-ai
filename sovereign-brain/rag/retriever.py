@@ -34,8 +34,8 @@ from qdrant_client.models import (
 
 log = logging.getLogger("sovereign.rag")
 
-# fastembed model — BAAI/bge-small-en-v1.5 is high quality, 384-dim, CPU-fast
-FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+# Embedding dimension for BAAI/bge-small-en-v1.5 (the default fastembed model).
+# If you change EMBEDDING_MODEL in config, update this to match.
 EMBEDDING_DIM = 384
 
 
@@ -102,8 +102,8 @@ class RAGRetriever:
             log.info(f"Created Qdrant collection: {self.settings.qdrant_collection}")
 
         # Load fastembed model (ONNX — downloads once, ~50MB, CPU-only)
-        log.info(f"Loading fastembed model: {FASTEMBED_MODEL}")
-        self._embedder = TextEmbedding(model_name=FASTEMBED_MODEL)
+        log.info(f"Loading fastembed model: {self.settings.embedding_model}")
+        self._embedder = TextEmbedding(model_name=self.settings.embedding_model)
         log.info("RAG retriever ready")
 
     async def retrieve(

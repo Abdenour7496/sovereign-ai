@@ -1,111 +1,159 @@
 """
-Sovereign Brain — Multi-Tier LLM Client
-=========================================
-Routes to Claude API with three model tiers:
-  Tier 1 → claude-haiku-4-5-20251001  (simple, fast, cheap)
-  Tier 2 → claude-sonnet-4-6           (balanced, high quality)
-  Tier 3 → claude-opus-4-6             (maximum reasoning)
+Sovereign Brain — Multi-Provider LLM Client
+============================================
+Provider-agnostic dispatcher that routes calls to the correct backend based
+on per-tier configuration.
 
-The tier is determined by the ComplexityRouter BEFORE calling this client.
-This module purely executes the LLM call with the correct model.
+Supported providers (set via LLM_TIER{1,2,3}_PROVIDER):
+  anthropic   — Claude Haiku / Sonnet / Opus (native Anthropic SDK)
+  openai      — GPT-4o, GPT-4o-mini, etc. (OpenAI API)
+  gemini      — Gemini 1.5 Flash / Pro (Google OpenAI-compat endpoint)
+  groq        — Llama-3, Mixtral, etc. (Groq Cloud)
+  openrouter  — Any model via OpenRouter aggregator
+  ollama      — Any local model via Ollama (self-hosted)
+  custom      — Any OpenAI-compatible endpoint (CUSTOM_LLM_BASE_URL)
 
-Design principles:
-  - Low temperature (0.1) for factual, government-grade consistency
-  - Streaming support for OpenWebUI real-time display
-  - All calls include the structured system prompt built by main.py
-  - GenerationMetadata is returned alongside response text for audit logging
+The tier is determined by ComplexityRouter BEFORE calling this client.
+This module only executes the LLM call with the routed model.
+
+Public interface is unchanged — main.py imports GenerationMetadata and
+LLMClient from here exactly as before.
 """
 
 import logging
-import re
-from dataclasses import dataclass
 from typing import AsyncGenerator, Optional, Tuple
-
-import anthropic
-import httpx
 
 from network.egress_monitor import EgressBlockedError, EgressMonitorTransport
 
+# Re-export GenerationMetadata so main.py import stays unchanged
+from llm.providers.base import BaseProvider, GenerationMetadata  # noqa: F401
+from llm.providers.anthropic_provider import AnthropicProvider
+from llm.providers.openai_compat import OpenAICompatibleProvider
+
 log = logging.getLogger("sovereign.llm")
 
-# System prompt invariant — appended to every call
-SAFETY_FOOTER = """
+# ── Provider factory ───────────────────────────────────────────────────────────
 
-IMPORTANT CONSTRAINTS:
-- You are providing information, NOT legal advice
-- Always recommend citizens contact the relevant agency to confirm eligibility
-- Never guarantee a specific payment amount — rates change
-- If you are uncertain, say so explicitly rather than guessing
-- Direct complex cases to human advisors
-"""
-
-# Patterns that indicate the LLM declined to answer
-_REFUSAL_PATTERNS = re.compile(
-    r"\b(i\s+cannot|i\s+can't|i'm\s+unable\s+to|i\s+am\s+unable\s+to|"
-    r"i\s+must\s+decline|i\s+won't|i\s+will\s+not\s+be\s+able\s+to|"
-    r"i\s+don't\s+have\s+(enough|sufficient|the)\s+information)\b",
-    re.IGNORECASE,
-)
-
-# Patterns indicating the response cites authoritative sources
-_CITATION_PATTERNS = re.compile(
-    r"\b(section\s+\d|social\s+security\s+act|services\s+australia|"
-    r"source:|according\s+to|as\s+per|under\s+(the\s+)?act|"
-    r"legislation|legal\s+clause|subsection)",
-    re.IGNORECASE,
-)
+# Default base URLs for each named OpenAI-compatible provider
+_OPENAI_COMPAT_DEFAULTS: dict[str, str] = {
+    "openai":      "https://api.openai.com/v1",
+    "groq":        "https://api.groq.com/openai/v1",
+    "openrouter":  "https://openrouter.ai/api/v1",
+    "gemini":      "https://generativelanguage.googleapis.com/v1beta/openai/",
+    # ollama and custom are resolved from settings (no hardcoded default)
+}
 
 
-@dataclass
-class GenerationMetadata:
-    """Audit metadata returned alongside every LLM response."""
-    input_tokens: int
-    output_tokens: int
-    model: str
-    stop_reason: str          # "end_turn" | "max_tokens" | "stop_sequence"
-    refusal_flag: bool        # LLM declined to answer
-    citation_present: bool    # Response cites policy sources
-    temperature: float
-
-
-class StreamWithMetadata:
+def _make_provider(provider_name: str, settings, transport) -> BaseProvider:
     """
-    Wraps an async generator that yields text chunks.
-    After iteration completes, .metadata holds GenerationMetadata.
-    Usage in main.py:
-        stream = llm.stream(...)
-        async for chunk in stream:
-            yield chunk
-        meta = stream.metadata
+    Instantiate the correct provider for a given tier.
+    `provider_name` matches the LLM_TIER{n}_PROVIDER env var value.
     """
+    name = provider_name.strip().lower()
 
-    def __init__(self, coro, temperature: float):
-        self._coro = coro
-        self._temperature = temperature
-        self.metadata: Optional[GenerationMetadata] = None
+    if name == "anthropic":
+        return AnthropicProvider(
+            api_key=settings.anthropic_api_key,
+            egress_transport=transport,
+        )
 
-    def __aiter__(self):
-        return self._run()
+    # All OpenAI-compatible providers share the same implementation
+    key_map = {
+        "openai":     settings.openai_api_key,
+        "groq":       settings.groq_api_key,
+        "openrouter": settings.openrouter_api_key,
+        "gemini":     settings.gemini_api_key,
+        "ollama":     "ollama",          # Ollama doesn't need a real API key
+        "custom":     settings.custom_llm_api_key,
+    }
+    url_map = {
+        "openai":     settings.openai_base_url,
+        "groq":       settings.groq_base_url,
+        "openrouter": settings.openrouter_base_url,
+        "gemini":     settings.gemini_base_url,
+        "ollama":     settings.ollama_base_url,
+        "custom":     settings.custom_llm_base_url,
+    }
 
-    async def _run(self):
-        accumulated = []
-        async for chunk in self._coro:
-            accumulated.append(chunk)
-            yield chunk
-        # Store metadata after iteration completes (set by the generator)
-        self._accumulated = "".join(accumulated)
+    if name in key_map:
+        api_key = key_map[name]
+        base_url = url_map[name]
+        if not base_url:
+            raise ValueError(
+                f"Provider '{name}' requires a base URL. "
+                f"Set the corresponding *_BASE_URL environment variable."
+            )
+        return OpenAICompatibleProvider(
+            api_key=api_key,
+            base_url=base_url,
+            egress_transport=transport,
+        )
 
+    raise ValueError(
+        f"Unknown LLM provider: '{provider_name}'. "
+        f"Valid options: anthropic, openai, gemini, groq, openrouter, ollama, custom"
+    )
+
+
+# ── LLMClient ─────────────────────────────────────────────────────────────────
 
 class LLMClient:
-    """Multi-tier Claude API client for the Sovereign Brain."""
+    """
+    Multi-tier, multi-provider LLM client for the Sovereign Brain.
+
+    Builds one provider instance per tier at startup, then dispatches
+    generate() / stream() calls to the correct provider based on the
+    model name returned by ComplexityRouter.
+    """
 
     def __init__(self, settings, on_egress=None):
         self.settings = settings
         transport = EgressMonitorTransport(mode=settings.mode, on_egress=on_egress)
-        self._client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key or "not-configured",
-            http_client=httpx.AsyncClient(transport=transport),
+
+        # One provider instance per tier (may share the same backend)
+        self._tier_providers: dict[str, BaseProvider] = {
+            "TIER_1": _make_provider(settings.llm_tier1_provider, settings, transport),
+            "TIER_2": _make_provider(settings.llm_tier2_provider, settings, transport),
+            "TIER_3": _make_provider(settings.llm_tier3_provider, settings, transport),
+        }
+
+        # Model name → tier lookup (built in reverse priority so that when
+        # the same model string appears in multiple tiers, the lowest tier wins,
+        # keeping behaviour consistent with the original single-provider setup).
+        self._model_to_tier: dict[str, str] = {}
+        for tier, attr in [
+            ("TIER_3", "llm_tier3_model"),
+            ("TIER_2", "llm_tier2_model"),
+            ("TIER_1", "llm_tier1_model"),
+        ]:
+            self._model_to_tier[getattr(settings, attr)] = tier
+
+        log.info(
+            "LLM providers initialised: "
+            f"T1={settings.llm_tier1_provider}/{settings.llm_tier1_model}, "
+            f"T2={settings.llm_tier2_provider}/{settings.llm_tier2_model}, "
+            f"T3={settings.llm_tier3_provider}/{settings.llm_tier3_model}"
         )
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _provider_for(self, model: str) -> BaseProvider:
+        tier = self._model_to_tier.get(model, "TIER_1")
+        return self._tier_providers[tier]
+
+    def _check_airgap(self) -> None:
+        if self.settings.mode == "airgapped":
+            raise EgressBlockedError(
+                "LLM unavailable: MODE=airgapped. "
+                "Use /api/eligibility/check for deterministic answers."
+            )
+
+    def _resolve_params(self, max_tokens: Optional[int]) -> Tuple[int, float]:
+        max_tok = max_tokens or self.settings.llm_max_tokens
+        temperature = 0.0 if self.settings.secure_mode else self.settings.llm_temperature
+        return max_tok, temperature
+
+    # ── Public API (identical signature to original client.py) ────────────────
 
     async def generate(
         self,
@@ -115,55 +163,14 @@ class LLMClient:
         max_tokens: int = None,
     ) -> Tuple[str, GenerationMetadata]:
         """
-        Generate a complete response (non-streaming).
-        Returns (text, GenerationMetadata) for both content and audit data.
+        Non-streaming generation. Returns (text, GenerationMetadata).
+        Dispatches to the provider assigned to the tier that owns `model`.
         """
-        if self.settings.mode == "airgapped":
-            raise EgressBlockedError(
-                "LLM unavailable: MODE=airgapped. "
-                "Use /api/eligibility/check for deterministic answers."
-            )
-        max_tok = max_tokens or self.settings.llm_max_tokens
-        temperature = 0.0 if self.settings.secure_mode else self.settings.llm_temperature
-        system = (system_prompt + SAFETY_FOOTER).strip() if system_prompt else SAFETY_FOOTER
-
+        self._check_airgap()
+        max_tok, temperature = self._resolve_params(max_tokens)
         log.info(f"LLM call: model={model}, messages={len(messages)}, max_tokens={max_tok}")
-
-        try:
-            response = await self._client.messages.create(
-                model=model,
-                max_tokens=max_tok,
-                temperature=temperature,
-                system=system,
-                messages=messages,
-            )
-            content = response.content[0].text if response.content else ""
-            log.info(
-                f"LLM response: {len(content)} chars, "
-                f"input_tokens={response.usage.input_tokens}, "
-                f"output_tokens={response.usage.output_tokens}"
-            )
-            meta = GenerationMetadata(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                model=response.model,
-                stop_reason=response.stop_reason or "end_turn",
-                refusal_flag=bool(_REFUSAL_PATTERNS.search(content)),
-                citation_present=bool(_CITATION_PATTERNS.search(content)),
-                temperature=temperature,
-            )
-            return content, meta
-        except anthropic.RateLimitError:
-            log.warning("Rate limit hit — returning fallback")
-            msg = self._rate_limit_message()
-            return msg, GenerationMetadata(
-                input_tokens=0, output_tokens=0, model=model,
-                stop_reason="rate_limit", refusal_flag=True,
-                citation_present=False, temperature=temperature,
-            )
-        except anthropic.APIError as e:
-            log.error(f"Anthropic API error: {e}")
-            raise
+        provider = self._provider_for(model)
+        return await provider.generate(messages, model, system_prompt, max_tok, temperature)
 
     async def stream(
         self,
@@ -173,101 +180,19 @@ class LLMClient:
         max_tokens: int = None,
     ) -> AsyncGenerator:
         """
-        Stream response chunks (for OpenWebUI real-time display).
-        Returns an async generator. After exhausting it, read .metadata
-        on the returned object for GenerationMetadata.
+        Streaming generation. Returns an async generator that yields text
+        chunks followed by a GenerationMetadata sentinel as the last item.
+        Caller detects sentinel via isinstance(chunk, GenerationMetadata).
         """
-        if self.settings.mode == "airgapped":
-            raise EgressBlockedError(
-                "LLM unavailable: MODE=airgapped. "
-                "Use /api/eligibility/check for deterministic answers."
-            )
-        max_tok = max_tokens or self.settings.llm_max_tokens
-        temperature = 0.0 if self.settings.secure_mode else self.settings.llm_temperature
-        system = (system_prompt + SAFETY_FOOTER).strip() if system_prompt else SAFETY_FOOTER
-
+        self._check_airgap()
+        max_tok, temperature = self._resolve_params(max_tokens)
         log.info(f"LLM stream: model={model}")
-        return self._stream_impl(messages, model, system, max_tok, temperature)
-
-    async def _stream_impl(
-        self,
-        messages: list,
-        model: str,
-        system: str,
-        max_tok: int,
-        temperature: float,
-    ):
-        """
-        Internal async generator that yields text chunks.
-        Sets self.metadata after stream completes.
-        This is a plain async generator — metadata is attached externally
-        via the _StreamContext wrapper used in main.py.
-        """
-        accumulated = []
-        final_message = None
-
-        try:
-            async with self._client.messages.stream(
-                model=model,
-                max_tokens=max_tok,
-                temperature=temperature,
-                system=system,
-                messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    accumulated.append(text)
-                    yield text
-                # Get final message with usage metadata after stream ends
-                final_message = await stream.get_final_message()
-        except anthropic.RateLimitError:
-            msg = self._rate_limit_message()
-            accumulated.append(msg)
-            yield msg
-        except anthropic.APIError as e:
-            log.error(f"Anthropic API stream error: {e}")
-            error_msg = f"\n\n[Error: {str(e)}]"
-            accumulated.append(error_msg)
-            yield error_msg
-
-        # Yield metadata as a special sentinel object at end
-        # main.py detects this by checking for GenerationMetadata type
-        full_text = "".join(accumulated)
-        if final_message and final_message.usage:
-            meta = GenerationMetadata(
-                input_tokens=final_message.usage.input_tokens,
-                output_tokens=final_message.usage.output_tokens,
-                model=final_message.model,
-                stop_reason=final_message.stop_reason or "end_turn",
-                refusal_flag=bool(_REFUSAL_PATTERNS.search(full_text)),
-                citation_present=bool(_CITATION_PATTERNS.search(full_text)),
-                temperature=temperature,
-            )
-        else:
-            meta = GenerationMetadata(
-                input_tokens=0, output_tokens=0, model=model,
-                stop_reason="unknown", refusal_flag=False,
-                citation_present=False, temperature=temperature,
-            )
-        yield meta  # Sentinel — main.py handles this specially
+        provider = self._provider_for(model)
+        return provider.stream_impl(messages, model, system_prompt, max_tok, temperature)
 
     async def health_check(self) -> bool:
-        """Verify API key and connectivity. Returns False when airgapped (intentional)."""
+        """Verify primary (Tier 1) provider connectivity. Returns False when airgapped."""
         if self.settings.mode == "airgapped":
             return False  # LLM intentionally disabled — not an error
-        try:
-            await self._client.messages.create(
-                model=self.settings.llm_tier1_model,
-                max_tokens=5,
-                messages=[{"role": "user", "content": "hi"}],
-            )
-            return True
-        except Exception:
-            return False
-
-    @staticmethod
-    def _rate_limit_message() -> str:
-        return (
-            "I'm currently experiencing high demand. "
-            "Please try your question again in a moment, "
-            "or contact the relevant government agency directly for immediate assistance."
-        )
+        provider = self._tier_providers["TIER_1"]
+        return await provider.health_check(self.settings.llm_tier1_model)

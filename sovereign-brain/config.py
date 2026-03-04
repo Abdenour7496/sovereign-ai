@@ -14,16 +14,49 @@ class Settings(BaseSettings):
     metrics_port: int = 9100
     log_level: str = "INFO"
 
-    # ── LLM (Claude API) ──────────────────────────────────────
-    anthropic_api_key: str = Field(default="", env="ANTHROPIC_API_KEY")
+    # ── LLM — Provider selection ──────────────────────────────
+    # Valid values: anthropic | openai | gemini | groq | openrouter | ollama | custom
+    # Each tier can use a different provider — mix and match freely.
+    llm_tier1_provider: str = "openai"
+    llm_tier2_provider: str = "openai"
+    llm_tier3_provider: str = "openai"
+
+    # ── LLM — Model names (one per tier, provider-specific syntax) ────────────
     # Tier 1: fast, cheap — simple citizen queries
-    llm_tier1_model: str = "claude-haiku-4-5-20251001"
+    llm_tier1_model: str = "gpt-4o-mini"
     # Tier 2: balanced — medium complexity
-    llm_tier2_model: str = "claude-sonnet-4-6"
-    # Tier 3: powerful — complex reasoning (use Opus in production)
-    llm_tier3_model: str = "claude-sonnet-4-6"
+    llm_tier2_model: str = "gpt-4o"
+    # Tier 3: powerful — complex reasoning
+    llm_tier3_model: str = "gpt-4o"
     llm_max_tokens: int = 2048
     llm_temperature: float = 0.1   # Low temp = deterministic, factual
+
+    # ── LLM — Anthropic ───────────────────────────────────────
+    anthropic_api_key: str = Field(default="", env="ANTHROPIC_API_KEY")
+
+    # ── LLM — OpenAI ──────────────────────────────────────────
+    openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
+    openai_base_url: str = "https://api.openai.com/v1"
+
+    # ── LLM — Google Gemini (via OpenAI-compatible endpoint) ──
+    gemini_api_key: str = Field(default="", env="GEMINI_API_KEY")
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    # ── LLM — Groq ────────────────────────────────────────────
+    groq_api_key: str = Field(default="", env="GROQ_API_KEY")
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+
+    # ── LLM — OpenRouter ──────────────────────────────────────
+    openrouter_api_key: str = Field(default="", env="OPENROUTER_API_KEY")
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # ── LLM — Ollama (local / self-hosted) ────────────────────
+    # Override OLLAMA_BASE_URL when running inside Docker (e.g. http://ollama:11434/v1)
+    ollama_base_url: str = Field(default="http://localhost:11434/v1", env="OLLAMA_BASE_URL")
+
+    # ── LLM — Custom OpenAI-compatible endpoint ────────────────
+    custom_llm_api_key: str = Field(default="", env="CUSTOM_LLM_API_KEY")
+    custom_llm_base_url: str = Field(default="", env="CUSTOM_LLM_BASE_URL")
 
     # ── Routing Thresholds ────────────────────────────────────
     router_tier1_max_score: int = 20
@@ -62,7 +95,7 @@ class Settings(BaseSettings):
         )
 
     # ── Embedding Model ───────────────────────────────────────
-    embedding_model: str = "all-MiniLM-L6-v2"  # Lightweight, local
+    embedding_model: str = "BAAI/bge-small-en-v1.5"  # fastembed ONNX model used by RAGRetriever
 
     # ── Audit Access Control ──────────────────────────────────
     # Legacy single key — treated as admin if set (backward compat).
@@ -84,7 +117,7 @@ class Settings(BaseSettings):
     secure_mode: bool = False
 
     # ── Deployment Mode ───────────────────────────────────────
-    # "connected":  LLM API calls enabled (default, requires ANTHROPIC_API_KEY)
+    # "connected":  LLM API calls enabled (default, requires OPENAI_API_KEY)
     # "airgapped":  LLM API blocked; deterministic eligibility engine only
     mode: str = "connected"
 
