@@ -1,7 +1,7 @@
 # Sovereign AI — Benefits Eligibility PoC
 
 > Sovereign AI Infrastructure — Proof of Concept
-> First vertical slice: **Benefits Eligibility** (Income Support, Housing Assistance, Carer Payment)
+> First vertical slice: **Benefits Eligibility** (Income Support, Housing Assistance, Carer Payment, Disability Support Pension, Age Pension)
 
 ---
 
@@ -529,9 +529,9 @@ sovereign-ai/
 │   └── network/
 │       └── egress_monitor.py       # httpx transport: log or block all outbound calls
 ├── neo4j/seed/
-│   └── 01_benefits_eligibility.cypher  # Policy graph (3 benefits, 60+ nodes)
+│   └── 01_benefits_eligibility.cypher  # Policy graph (5 benefits: Income Support, Housing Assistance, Carer Payment, DSP, Age Pension)
 ├── qdrant/
-│   └── seed_documents.py           # 7 authoritative policy documents
+│   └── seed_documents.py           # 11 authoritative policy documents (DSP + Age Pension added)
 ├── postgres/
 │   ├── init/
 │   │   ├── 01_audit_schema.sql     # Base audit schema + views
@@ -612,8 +612,8 @@ Full control evidence for government security review is in `docs/`:
 
 ## Roadmap
 
-- [ ] Add Disability Support Pension benefit to graph
-- [ ] Age Pension + Family Payment benefits
+- [x] Add Disability Support Pension benefit to graph
+- [x] Age Pension benefit
 - [ ] PII scrubbing / pseudonymisation in audit logs
 - [ ] K3s HA cluster deployment manifests (3-node)
 - [ ] vLLM local model serving (remove cloud LLM dependency)

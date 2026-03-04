@@ -286,6 +286,52 @@ class ComplexityRouter:
         elif any(w in q for w in ["partner", "married", "couple", "de facto"]):
             data["relationship_status"] = "partnered"
 
+        # Disability / DSP-specific fields
+        if any(w in q for w in [
+            "disability", "disabled", "permanent condition", "mental illness",
+            "psychiatric", "intellectual disability", "chronic illness",
+            "can't work", "cannot work", "unable to work",
+        ]):
+            data["has_permanent_disability"] = True
+
+        # Work capacity (max hours able to work per week — for DSP)
+        m = re.search(
+            r"(?:can only|able to|capacity to|work(?:ing)?)\s+(?:up to\s+)?(\d+)\s*h(?:ours?)?(?:\s*/\s*week|\s+per\s+week|\s+a\s+week)",
+            q,
+        )
+        if m:
+            data["work_capacity_hours_per_week"] = int(m.group(1))
+        elif data.get("has_permanent_disability") and "work" not in q:
+            # Assume zero work capacity if disability mentioned with no work context
+            data["work_capacity_hours_per_week"] = 0
+
+        # Housing type (for rent assistance)
+        if any(w in q for w in ["public housing", "government housing", "commission housing"]):
+            data["housing_type"] = "public_housing"
+        elif any(w in q for w in ["renting", "rent", "private rental", "tenant"]):
+            data["housing_type"] = "private_rental"
+
+        # Weekly rent
+        m = re.search(r"\$(\d[\d,]*)\s*(?:per\s+week|/\s*week|a\s+week)\s+(?:in\s+)?rent", q)
+        if not m:
+            m = re.search(r"rent(?:ing)?\s+(?:for\s+)?\$(\d[\d,]*)\s*(?:per\s+week|/\s*week|a\s+week)?", q)
+        if m:
+            data["weekly_rent"] = float(m.group(1).replace(",", ""))
+
+        # Receiving income support (for rent assistance eligibility)
+        if any(w in q for w in [
+            "receiving income support", "on jobseeker", "on income support",
+            "getting income support", "already on a payment",
+        ]):
+            data["receives_income_support"] = True
+
+        # Providing care (for carer payment)
+        if any(w in q for w in [
+            "providing care", "caring for", "full-time carer", "constant care",
+            "looking after", "carer for",
+        ]):
+            data["provides_constant_care"] = True
+
         return data if data else None
 
     # ── Internal Helpers ───────────────────────────────────────────────────

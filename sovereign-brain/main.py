@@ -150,7 +150,9 @@ NO_RULES_ESCALATION = Counter(
 # In-memory per-session escalation lock. Maps session_id → highest tier seen.
 # Cleared on service restart (by design — sessions are per-deployment).
 _session_peak_tier: dict[str, str] = {}
+_session_last_seen: dict[str, float] = {}   # session_id → unix timestamp of last request
 _TIER_ORDER_MAP = {"TIER_1": 1, "TIER_2": 2, "TIER_3": 3}
+_SESSION_TTL_SECONDS = 86_400  # evict sessions not seen for 24 hours
 
 # ── Global Service Instances ──────────────────────────────────────────────────
 router: Optional[ComplexityRouter] = None
@@ -326,6 +328,21 @@ async def lifespan(app: FastAPI):
         anomaly_detector = BehavioralAnomalyDetector(audit)
         log.info("✅ Behavioral anomaly detector active")
 
+    # ── Session TTL Cleanup ────────────────────────────────────────────────
+    async def _cleanup_stale_sessions():
+        """Evict session escalation state not seen for SESSION_TTL_SECONDS (24h)."""
+        while True:
+            await asyncio.sleep(3600)  # run hourly
+            cutoff = time.time() - _SESSION_TTL_SECONDS
+            stale = [sid for sid, ts in _session_last_seen.items() if ts < cutoff]
+            for sid in stale:
+                _session_peak_tier.pop(sid, None)
+                _session_last_seen.pop(sid, None)
+            if stale:
+                log.info("Session TTL cleanup: evicted %d stale session(s)", len(stale))
+
+    asyncio.create_task(_cleanup_stale_sessions())
+
     log.info("🟢 Sovereign Brain fully operational")
     yield
 
@@ -492,6 +509,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
         routed_tier = routing["tier"]
         if _TIER_ORDER_MAP.get(routed_tier, 0) > _TIER_ORDER_MAP.get(_session_peak_tier.get(session_id, ""), 0):
             _session_peak_tier[session_id] = routed_tier
+        _session_last_seen[session_id] = time.time()
         state.routing = routing
         log.info(
             f"[{request_id}] Routed → {routing['tier']} "

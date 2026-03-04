@@ -230,6 +230,203 @@ CARER ALLOWANCE (separate payment):
 In addition to Carer Payment, you may also receive Carer Allowance of $153.50/fortnight.
 """,
     },
+    # ── Disability Support Pension Documents ─────────────────────────────
+    {
+        "id": 8,
+        "title": "Disability Support Pension — Eligibility Criteria",
+        "source": "Services Australia — DSP Eligibility Guide",
+        "benefit_ids": ["disability-support"],
+        "jurisdiction": "National",
+        "document_type": "eligibility_guide",
+        "effective_date": "2024-03-20",
+        "content": """
+Disability Support Pension (DSP) — Eligibility
+
+DSP provides income support for people with a permanent physical, intellectual or
+psychiatric condition that prevents them from working 15 or more hours per week.
+
+WHO QUALIFIES — THE PERSON must:
+
+1. AGE: Be aged 16 years or older and below pension age (67).
+
+2. RESIDENCY: Be an Australian citizen, permanent resident, or eligible visa holder
+   AND have lived in Australia for at least 10 years (120 months).
+   - International social security agreements may reduce the residency requirement.
+
+3. PERMANENT DISABILITY: Have a physical, intellectual or psychiatric condition that:
+   - Is fully diagnosed, treated and stabilised
+   - Is likely to persist for at least 2 years
+   - Causes an impairment rating of 20 points or more under the Impairment Tables
+   OR have manifest eligibility (terminal illness, IQ ≤54, legally blind, or
+   receiving involuntary psychiatric treatment).
+
+4. WORK CAPACITY: The condition must prevent the person from working 15 or more
+   hours per week at minimum wage in open employment, even with training or
+   rehabilitation, for the next 2 years.
+
+5. INCOME TEST: Weekly income below $1,115/week (single).
+   Employment income of up to $180/fortnight is ignored (work incentive provision).
+
+6. ASSETS TEST: Same thresholds as Income Support:
+   - Single homeowner: below $280,000
+   - Single non-homeowner: below $504,500
+
+PAYMENT RATES (2024):
+- Single, under 21, no children: $780.70/fortnight ($390.35/week)
+- Single, 21 or older: $1,096.70/fortnight ($548.35/week)
+- Couple (each): $826.70/fortnight ($413.35/week)
+
+ASSESSMENTS REQUIRED:
+- Job Capacity Assessment (JCA) with a trained assessor
+- Impairment Table rating by a qualified health professional
+- Treating specialist supporting evidence (GP/specialist report)
+""",
+    },
+    {
+        "id": 9,
+        "title": "Disability Support Pension — Work Capacity and ADAT Assessment",
+        "source": "Services Australia — DSP Assessment Guide",
+        "benefit_ids": ["disability-support"],
+        "jurisdiction": "National",
+        "document_type": "assessment_guide",
+        "effective_date": "2024-01-01",
+        "content": """
+DSP — Work Capacity Assessment and Impairment Tables
+
+IMPAIRMENT TABLES:
+DSP uses 15 Impairment Tables to rate the functional impact of a condition:
+- Tables 1-4: Musculoskeletal (upper limb, lower limb, spinal)
+- Tables 5-7: Neurological, sensory (vision, hearing)
+- Table 8: Cardiovascular / respiratory
+- Tables 9-11: Digestive, metabolic, reproductive
+- Table 12: Mental health conditions
+- Tables 13-15: Multiple conditions, fatigue, pain
+
+Each table rates impairment from 0 to 30+ points.
+MINIMUM 20 POINTS required to qualify for DSP (can be spread across multiple tables
+using 5-point clusters from different tables).
+
+MANIFEST ELIGIBILITY (no Impairment Table assessment required):
+You may be granted DSP immediately if you have:
+- A terminal illness (likely to die within 2 years)
+- An intellectual disability with full-scale IQ of 54 or below
+- Blindness (visual acuity <6/60 in better eye after correction)
+- Receiving involuntary psychiatric treatment under a Mental Health Act
+
+15-HOUR WORK CAPACITY RULE:
+The condition must prevent working 15 or more hours per week at award wages.
+This is assessed over the next 2 years, considering:
+- Ability with any aids, equipment, or prostheses
+- After reasonable training or rehabilitation
+
+SUPPORTED EMPLOYMENT:
+DSP recipients can work in Australian Disability Enterprises (ADEs) and sheltered
+workshops without the hours counting against the 15-hour limit.
+
+Note: Open employment of 30+ hours/week may trigger a DSP review.
+""",
+    },
+    # ── Age Pension Documents ──────────────────────────────────────────────
+    {
+        "id": 10,
+        "title": "Age Pension — Eligibility and Rates",
+        "source": "Services Australia — Age Pension Eligibility Guide",
+        "benefit_ids": ["age-pension"],
+        "jurisdiction": "National",
+        "document_type": "eligibility_guide",
+        "effective_date": "2024-03-20",
+        "content": """
+Age Pension — Eligibility
+
+The Age Pension provides income support to Australians who have reached pension age
+and meet residency, income and assets requirements.
+
+PENSION AGE: 67 years (for people born on or after 1 January 1957).
+
+RESIDENCY REQUIREMENTS:
+- Must be an Australian citizen, permanent resident, or eligible visa holder
+- Must have lived in Australia for at least 10 years total
+- At least 5 of those years must be continuous
+
+INCOME TEST (2024):
+- Single: Full pension if income ≤ $212/fortnight ($106/week)
+  - Pension reduces by 50 cents per dollar above this
+  - No pension if income ≥ $2,318.40/fortnight ($1,159/week)
+- Couple: Full pension if combined income ≤ $372/fortnight
+  - No pension if combined income ≥ $3,545.60/fortnight
+
+ASSETS TEST (2024 — full cut-off thresholds):
+- Single homeowner: No pension if assets ≥ $674,000
+- Single non-homeowner: No pension if assets ≥ $916,500
+- Couple homeowner: No pension if combined assets ≥ $1,012,500
+- Couple non-homeowner: No pension if combined assets ≥ $1,255,000
+
+Note: Your home is NOT counted in the assets test (if you live in it).
+Assets include: bank accounts, shares, investment properties, vehicles, superannuation.
+
+PAYMENT RATES (2024):
+- Single: $1,116.30/fortnight ($558.15/week)
+- Couple (each): $841.40/fortnight ($420.70/week)
+- Pension Supplement: $81.60/fortnight (single) added on top
+- Energy Supplement: $14.10/fortnight (single)
+
+DEEMING:
+Financial assets (bank accounts, shares, managed funds) are subject to deeming rates:
+- First $60,400 (single): deemed to earn 0.25% p.a.
+- Above $60,400 (single): deemed to earn 2.25% p.a.
+""",
+    },
+    {
+        "id": 11,
+        "title": "Age Pension — Assets Test and Transitional Arrangements",
+        "source": "Services Australia — Age Pension Assets Guide",
+        "benefit_ids": ["age-pension"],
+        "jurisdiction": "National",
+        "document_type": "rate_schedule",
+        "effective_date": "2024-03-20",
+        "content": """
+Age Pension Assets Test — Detailed Guide
+
+ASSETS TEST THRESHOLDS (as at 20 March 2024):
+
+FULL PENSION — assets must be BELOW:
+- Single homeowner: $301,750
+- Single non-homeowner: $543,750
+- Couple homeowner: $451,500
+- Couple non-homeowner: $693,500
+
+PART PENSION — pension reduces by $3/fortnight per $1,000 above full pension threshold.
+PENSION CUTS OUT ENTIRELY when assets reach:
+- Single homeowner: $674,000
+- Single non-homeowner: $916,500
+- Couple homeowner: $1,012,500
+- Couple non-homeowner: $1,255,000
+
+WHAT IS COUNTED AS AN ASSET:
+✓ Counted:
+- Bank accounts and term deposits
+- Shares, managed funds, ETFs
+- Investment properties (not your primary home)
+- Motor vehicles, boats, caravans
+- Superannuation (if over pension age)
+- Farm equipment, business assets
+- Loans you have made to others
+
+✗ NOT counted:
+- Your principal home (primary residence)
+- Funeral bonds up to $14,000
+- Some family trusts (specialist advice required)
+
+PROPERTY AND HOMEOWNER STATUS:
+- You are a "homeowner" if you own or are paying off the home you live in.
+- Granny flats and life interests may have special treatment.
+- If you sell your home, proceeds are assessed for up to 12 months.
+
+GIFTING RULES:
+- You can gift up to $10,000/year (max $30,000 over 5 years) without it affecting your pension.
+- Amounts above this are assessed as a "deprived asset" for 5 years.
+""",
+    },
     # ── Appeals and Review ────────────────────────────────────────────────
     {
         "id": 6,
