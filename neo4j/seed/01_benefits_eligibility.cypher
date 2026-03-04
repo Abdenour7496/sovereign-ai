@@ -979,10 +979,197 @@ MATCH (r:EligibilityRule {id: 'ap-residency-rule'}),
       (e1:Exception {id: 'ap-ex-agreement'}), (e2:Exception {id: 'ap-ex-refugee'})
 CREATE (r)-[:HAS_EXCEPTION]->(e1), (r)-[:HAS_EXCEPTION]->(e2);
 
+// ============================================================
+// BENEFIT 6: Family Tax Benefit Part A (FTB-A)
+// ============================================================
+
+// Family Assistance legislation
+CREATE (:Legislation {
+  id: 'fa-act-1999',
+  name: 'A New Tax System (Family Assistance) Act 1999',
+  year: 1999,
+  jurisdiction: 'Commonwealth',
+  url: 'https://www.legislation.gov.au/Details/C2024C00074'
+});
+
+CREATE (:LegalClause {
+  id: 'fa-s4',
+  reference: 'Family Assistance Act 1999, Section 4',
+  title: 'FTB — when individual is entitled',
+  summary: 'An individual is entitled to FTB-A if they care for at least one FTB child and meet income and residency requirements'
+});
+CREATE (:LegalClause {
+  id: 'fa-s22',
+  reference: 'Family Assistance Act 1999, Section 22',
+  title: 'FTB child — definition',
+  summary: 'A person is an FTB child if they are under 16, or 16-19 and in full-time secondary education, and in the individual\'s care'
+});
+CREATE (:LegalClause {
+  id: 'fa-s24',
+  reference: 'Family Assistance Act 1999, Section 24',
+  title: 'FTB-A — income test',
+  summary: 'Full rate if adjusted taxable income is $58,108 or less; base rate paid up to approximately $99,864; no payment above that'
+});
+
+MATCH (leg:Legislation {id: 'fa-act-1999'}),
+      (c1:LegalClause {id: 'fa-s4'}),
+      (c2:LegalClause {id: 'fa-s22'}),
+      (c3:LegalClause {id: 'fa-s24'})
+CREATE (c1)-[:PART_OF]->(leg),
+       (c2)-[:PART_OF]->(leg),
+       (c3)-[:PART_OF]->(leg);
+
+CREATE (:Benefit {
+  id: 'family-payment',
+  name: 'Family Tax Benefit Part A',
+  description: 'A payment to help with the cost of raising children. Paid for each eligible child under 16 (or under 20 if in full-time secondary study). The amount depends on family income and the number of children.',
+  category: 'family_support',
+  jurisdiction: 'National',
+  weekly_max_rate: 106.68,
+  fortnightly_max_rate: 213.36,
+  currency: 'AUD',
+  administered_by: 'Services Australia / Australian Tax Office',
+  website: 'https://www.servicesaustralia.gov.au/family-tax-benefit'
+});
+
+// FTB-A — Rules
+CREATE (:EligibilityRule {
+  id: 'ftb-residency-rule',
+  name: 'Residency Requirement',
+  description: 'Claimant must be an Australian citizen or permanent resident',
+  mandatory: true,
+  priority: 1
+});
+CREATE (:EligibilityRule {
+  id: 'ftb-age-rule',
+  name: 'Claimant Age Requirement',
+  description: 'Claimant must be 18 or older and below pension age',
+  mandatory: true,
+  priority: 2
+});
+CREATE (:EligibilityRule {
+  id: 'ftb-dependent-rule',
+  name: 'Has Dependent FTB Child',
+  description: 'Must have at least one FTB child in care — under 16, or 16-19 in full-time secondary study',
+  mandatory: true,
+  priority: 3
+});
+CREATE (:EligibilityRule {
+  id: 'ftb-income-rule',
+  name: 'Family Income Test',
+  description: 'Adjusted taxable family income must be below the base rate income limit',
+  mandatory: true,
+  priority: 4
+});
+
+// FTB-A — Conditions
+CREATE (:Condition {
+  id: 'ftb-residency-status',
+  name: 'Australian Citizen or Permanent Resident',
+  field: 'residency_status',
+  operator: 'IN',
+  value: 'citizen_or_pr',
+  unit: ''
+});
+CREATE (:Condition {
+  id: 'ftb-age-min',
+  name: 'Claimant Minimum Age (18 years)',
+  field: 'age',
+  operator: 'GTE',
+  value: 18,
+  unit: 'years'
+});
+CREATE (:Condition {
+  id: 'ftb-has-dependents',
+  name: 'Has Dependent Child',
+  field: 'has_dependents',
+  operator: 'IS_TRUE',
+  value: true,
+  unit: ''
+});
+CREATE (:Condition {
+  id: 'ftb-income-limit',
+  name: 'Family Weekly Income Below Base Rate Limit',
+  field: 'weekly_income',
+  operator: 'LTE',
+  value: 1920.0,
+  unit: 'AUD/week'
+});
+
+// FTB-A — Exceptions
+CREATE (:Exception {
+  id: 'ftb-ex-shared-care',
+  name: 'Shared Care Arrangement',
+  description: 'Where care is shared between two parents (e.g. after separation), each parent may receive a percentage of FTB-A based on percentage of care (requires minimum 35% care)',
+  legal_reference: 'Family Assistance Act 1999, Section 59'
+});
+CREATE (:Exception {
+  id: 'ftb-ex-foster-care',
+  name: 'Foster and Kinship Care',
+  description: 'Foster carers and kinship carers may be eligible for FTB-A for children in their care under state/territory child welfare arrangements',
+  legal_reference: 'Family Assistance Act 1999, Section 22(3)'
+});
+
+// Connect Benefit → Rules
+MATCH (b:Benefit {id: 'family-payment'}),
+      (r1:EligibilityRule {id: 'ftb-residency-rule'}),
+      (r2:EligibilityRule {id: 'ftb-age-rule'}),
+      (r3:EligibilityRule {id: 'ftb-dependent-rule'}),
+      (r4:EligibilityRule {id: 'ftb-income-rule'})
+CREATE (b)-[:HAS_RULE]->(r1),
+       (b)-[:HAS_RULE]->(r2),
+       (b)-[:HAS_RULE]->(r3),
+       (b)-[:HAS_RULE]->(r4);
+
+// Connect Rules → Conditions
+MATCH (r:EligibilityRule {id: 'ftb-residency-rule'}),
+      (c:Condition {id: 'ftb-residency-status'})
+CREATE (r)-[:HAS_CONDITION]->(c);
+
+MATCH (r:EligibilityRule {id: 'ftb-age-rule'}),
+      (c:Condition {id: 'ftb-age-min'})
+CREATE (r)-[:HAS_CONDITION]->(c);
+
+MATCH (r:EligibilityRule {id: 'ftb-dependent-rule'}),
+      (c:Condition {id: 'ftb-has-dependents'})
+CREATE (r)-[:HAS_CONDITION]->(c);
+
+MATCH (r:EligibilityRule {id: 'ftb-income-rule'}),
+      (c:Condition {id: 'ftb-income-limit'})
+CREATE (r)-[:HAS_CONDITION]->(c);
+
+// Connect Conditions → Legal Clauses
+MATCH (c:Condition {id: 'ftb-residency-status'}), (lc:LegalClause {id: 'fa-s4'})
+CREATE (c)-[:DEFINED_BY]->(lc);
+MATCH (c:Condition {id: 'ftb-age-min'}), (lc:LegalClause {id: 'fa-s4'})
+CREATE (c)-[:DEFINED_BY]->(lc);
+MATCH (c:Condition {id: 'ftb-has-dependents'}), (lc:LegalClause {id: 'fa-s22'})
+CREATE (c)-[:DEFINED_BY]->(lc);
+MATCH (c:Condition {id: 'ftb-income-limit'}), (lc:LegalClause {id: 'fa-s24'})
+CREATE (c)-[:DEFINED_BY]->(lc);
+
+// Connect Rules → Exceptions
+MATCH (r:EligibilityRule {id: 'ftb-dependent-rule'}),
+      (e1:Exception {id: 'ftb-ex-shared-care'}),
+      (e2:Exception {id: 'ftb-ex-foster-care'})
+CREATE (r)-[:HAS_EXCEPTION]->(e1), (r)-[:HAS_EXCEPTION]->(e2);
+
+// ============================================================
+// POLICY VERSIONING
+// Mark all Benefit and EligibilityRule nodes with valid_from
+// and valid_to so policy changes can be tracked over time.
+// valid_to = null means currently active.
+// ============================================================
+MATCH (b:Benefit) WHERE b.valid_from IS NULL
+SET b.valid_from = '2024-03-20', b.valid_to = null, b.policy_version = 1;
+
+MATCH (r:EligibilityRule) WHERE r.valid_from IS NULL
+SET r.valid_from = '2024-03-20', r.valid_to = null, r.policy_version = 1;
+
 // ── Verification Query (run to confirm) ───────────────────────
-// MATCH (b:Benefit) RETURN b.id, b.name, b.weekly_max_rate;
+// MATCH (b:Benefit) RETURN b.id, b.name, b.weekly_max_rate, b.valid_from;
 // MATCH (b:Benefit)-[:HAS_RULE]->(r:EligibilityRule)-[:HAS_CONDITION]->(c:Condition)
 //       -[:DEFINED_BY]->(lc:LegalClause)-[:PART_OF]->(leg:Legislation)
 // RETURN b.name, r.name, c.name, lc.reference, leg.name;
 
-RETURN 'Sovereign AI Policy Graph seeded successfully (5 benefits)' AS status;
+RETURN 'Sovereign AI Policy Graph seeded successfully (6 benefits)' AS status;

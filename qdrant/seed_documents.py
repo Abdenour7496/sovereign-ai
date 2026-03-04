@@ -516,6 +516,121 @@ WAIT TIMES:
 - Emergency payments available in hardship situations
 """,
     },
+
+    # ── Doc 12: Family Tax Benefit Part A — Eligibility ──────────────────
+    {
+        "id": 12,
+        "title": "Family Tax Benefit Part A — Eligibility and Income Test",
+        "benefit_id": "ftb_a",
+        "jurisdiction": "AU",
+        "source": "Family Assistance Act 1999 — Part 3, Division 1",
+        "content": """
+FAMILY TAX BENEFIT PART A (FTB-A)
+
+PURPOSE:
+Family Tax Benefit Part A (FTB-A) helps families with the cost of raising children.
+It is paid per child and is income tested. Administered by Services Australia.
+
+WHO IS ELIGIBLE:
+You may qualify for FTB-A if you:
+- Have a dependent child under 16 OR a full-time student aged 16-19
+- Care for the child at least 35% of the time (shared care threshold)
+- Are an Australian resident (citizen, permanent resident, or Protected SCV holder)
+- Meet the income test
+
+RESIDENCY REQUIREMENTS:
+- Must be an Australian resident at time of claim
+- Child must also be an Australian resident
+- Temporary visa holders generally not eligible (exceptions for SCV holders and some protection visa holders)
+
+DEPENDENT CHILD DEFINITION:
+A child is dependent for FTB-A purposes if:
+- Aged under 16, OR
+- Aged 16-19 and undertaking full-time study at school or equivalent institution
+- Not receiving youth allowance, DSP, or similar payments in their own right
+
+INCOME TEST — 2024:
+The maximum rate of FTB-A is paid when family adjusted taxable income (ATI) is below $60,688/year.
+A standard rate (base rate) applies up to $99,864/year (weekly: $1,920).
+Above $99,864/year, FTB-A reduces by 30 cents per dollar of additional income until it reaches zero.
+
+FORTNIGHTLY INCOME LIMIT FOR STANDARD RATE:
+- Maximum combined family income: $99,864/year (~$3,841/fortnight, ~$1,920/week)
+
+SHARED CARE ARRANGEMENTS:
+- If parents share care of a child, each parent may receive a percentage of FTB-A
+- Minimum threshold: at least 35% care (approx. 2.45 days/week)
+- FTB-A is apportioned to the percentage of care each parent provides
+- If one parent has more than 65% care, the other is not eligible
+
+PAYMENT RATES (2024):
+- Maximum rate per child under 13: $213.36/fortnight ($426.72/month)
+- Maximum rate per child 13-19: $277.48/fortnight ($554.96/month)
+- Base rate per child: $63.56/fortnight (regardless of age)
+- Newborn Supplement may be added for new children
+
+MULTIPLE CHILDREN:
+FTB-A is calculated per child. Families with multiple eligible children receive FTB-A for each child separately.
+
+CLAIMING FTB-A:
+- Claim via myGov (my.gov.au) -> Services Australia
+- Can claim fortnightly instalments or as a lump sum after tax year ends
+- Provide proof of income, child's details, and care arrangements if shared
+""",
+    },
+
+    # ── Doc 13: Family Tax Benefit Part A — Rates and Supplements ────────
+    {
+        "id": 13,
+        "title": "Family Tax Benefit Part A — Rates, Supplements, and End-of-Year Reconciliation",
+        "benefit_id": "ftb_a",
+        "jurisdiction": "AU",
+        "source": "Family Assistance Administration Act 1999 — Part 3",
+        "content": """
+FAMILY TAX BENEFIT PART A — RATES AND RECONCILIATION
+
+RATE STRUCTURE:
+FTB-A has two rate levels:
+1. Maximum Rate — paid when ATI <= $60,688/year
+2. Base Rate — paid when ATI is between $60,688 and $99,864/year
+
+Above $99,864/year, the payment reduces by 30 cents per additional dollar of income until nil.
+
+2024 MAXIMUM FORTNIGHTLY RATES (per child):
+- Child aged 0-12:    $213.36/fortnight
+- Child aged 13-15:   $277.48/fortnight
+- Child aged 16-19 (full-time student): $277.48/fortnight
+
+BASE RATE:
+$63.56/fortnight per child (all ages)
+
+SUPPLEMENTS INCLUDED IN FTB-A:
+- Energy Supplement Part A: $3.60-$5.60/fortnight per child (income tested)
+- Newborn Supplement: Up to $1,725.36 for first child, $577.94 for subsequent children (first 13 weeks)
+- Rent Assistance: Added to FTB-A if renting privately and on maximum rate
+
+ANNUAL RECONCILIATION (END-OF-YEAR BALANCING):
+- Services Australia reconciles fortnightly instalments against actual income at tax return lodgement
+- Underpayment -> top-up payment issued
+- Overpayment -> debt raised; can be repaid via deductions from future payments
+- Families must lodge tax returns by 30 June to avoid being required to repay all instalments
+
+MAINTENANCE INCOME TEST:
+If child support (maintenance) is received, FTB-A may be reduced by:
+- 50 cents per dollar of child support above the Maintenance Income Free Area (~$1,686/year for first child)
+
+FOSTER CARE / PERMANENT CARE:
+- Foster carers and kinship carers may receive FTB-A even if not biological parents
+- Must meet minimum care threshold (35%)
+- Foster care organisations are separately funded; carer's FTB-A is in addition
+
+HOW TO MAXIMISE ENTITLEMENT:
+1. Estimate income accurately — underestimating leads to overpayments
+2. Claim for each eligible child separately
+3. Update care arrangements promptly if shared care percentages change
+4. Lodge tax returns on time to avoid debt recovery
+""",
+    },
 ]
 
 

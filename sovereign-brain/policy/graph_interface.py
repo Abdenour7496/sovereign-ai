@@ -43,15 +43,18 @@ class PolicyGraph:
             await self._driver.close()
 
     async def list_benefits(self) -> list:
-        """Return all benefits available in the policy graph."""
+        """Return all currently active benefits in the policy graph."""
         query = """
         MATCH (b:Benefit)
+        WHERE b.valid_to IS NULL OR b.valid_to >= date()
         OPTIONAL MATCH (b)-[:HAS_RULE]->(r:EligibilityRule)
+               WHERE r.valid_to IS NULL OR r.valid_to >= date()
         RETURN b.id AS id,
                b.name AS name,
                b.description AS description,
                b.jurisdiction AS jurisdiction,
                b.weekly_max_rate AS weekly_max_rate,
+               b.valid_from AS effective_from,
                count(r) AS rule_count
         ORDER BY b.name
         """
@@ -244,16 +247,42 @@ class PolicyGraph:
         return graph_hash, total_nodes
 
     # ── Private Methods ────────────────────────────────────────────────────
+    async def get_benefit_rates(self, benefit_id: str) -> Optional[dict]:
+        """Return the rate schedule and metadata for a benefit."""
+        query = """
+        MATCH (b:Benefit {id: $benefit_id})
+        WHERE b.valid_to IS NULL OR b.valid_to >= date()
+        RETURN b.id AS benefit_id,
+               b.name AS benefit_name,
+               b.description AS description,
+               b.category AS category,
+               b.weekly_max_rate AS weekly_max_rate,
+               b.fortnightly_max_rate AS fortnightly_max_rate,
+               b.currency AS currency,
+               b.administered_by AS administered_by,
+               b.website AS website,
+               b.valid_from AS effective_from,
+               b.valid_to AS valid_to,
+               b.policy_version AS policy_version
+        """
+        async with self._driver.session() as session:
+            result = await session.run(query, benefit_id=benefit_id)
+            record = await result.single()
+            return dict(record) if record else None
+
     async def _get_benefit(self, benefit_id: str) -> Optional[dict]:
         query = """
         MATCH (b:Benefit {id: $benefit_id})
+        WHERE b.valid_to IS NULL OR b.valid_to >= date()
         RETURN b.id AS id,
                b.name AS name,
                b.description AS description,
                b.jurisdiction AS jurisdiction,
                b.weekly_max_rate AS weekly_max_rate,
                b.fortnightly_max_rate AS fortnightly_max_rate,
-               b.category AS category
+               b.category AS category,
+               b.valid_from AS effective_from,
+               b.policy_version AS policy_version
         """
         async with self._driver.session() as session:
             result = await session.run(query, benefit_id=benefit_id)
@@ -263,6 +292,7 @@ class PolicyGraph:
     async def _get_rules_with_conditions(self, benefit_id: str) -> list:
         query = """
         MATCH (b:Benefit {id: $benefit_id})-[:HAS_RULE]->(r:EligibilityRule)
+        WHERE r.valid_to IS NULL OR r.valid_to >= date()
         OPTIONAL MATCH (r)-[:HAS_CONDITION]->(c:Condition)
         OPTIONAL MATCH (c)-[:DEFINED_BY]->(lc:LegalClause)-[:PART_OF]->(leg:Legislation)
         WITH r, c, lc, leg
@@ -284,6 +314,8 @@ class PolicyGraph:
                r.description AS description,
                r.mandatory AS mandatory,
                r.priority AS priority,
+               r.valid_from AS effective_from,
+               r.policy_version AS policy_version,
                [c IN conditions WHERE c IS NOT NULL] AS conditions
         ORDER BY r.priority ASC
         """

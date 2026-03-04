@@ -1,7 +1,7 @@
 # Sovereign AI — Benefits Eligibility PoC
 
 > Sovereign AI Infrastructure — Proof of Concept
-> First vertical slice: **Benefits Eligibility** (Income Support, Housing Assistance, Carer Payment, Disability Support Pension, Age Pension)
+> First vertical slice: **Benefits Eligibility** (Income Support, Housing Assistance, Carer Payment, Disability Support Pension, Age Pension, Family Tax Benefit Part A)
 
 ---
 
@@ -24,6 +24,7 @@ Sovereign Brain (FastAPI :8100)
     ├── Egress Monitor Transport
     │       └── Intercepts 100% of outbound HTTP — logs or blocks (airgap mode)
     └── Sovereign Runtime Audit Layer
+            ├── PII Scrubber           → regex-based Australian PII redaction before audit storage
             ├── Audit Logger           → hash-chained, Postgres immutable trail
             ├── Security Events        → independent hash-chained security log
             ├── Behavioral Anomaly Detector → sliding-window abuse detection
@@ -212,6 +213,7 @@ docker compose -f docker-compose.yml up -d sovereign-brain
 | Sovereign Brain API   | http://localhost:8100         | OpenAI-compatible chat API               |
 | Sovereign Brain Docs  | http://localhost:8100/docs    | FastAPI Swagger UI                       |
 | System Mode           | http://localhost:8100/api/system/mode | Connected vs airgapped status   |
+| Benefit Rate Lookup   | http://localhost:8100/api/benefits/{id}/rates | Rate schedule + policy version |
 | OpenWebUI             | http://localhost:3000         | Already running                          |
 | Neo4j Browser         | http://localhost:7474         | Policy graph explorer                    |
 | Qdrant                | http://localhost:6333         | Vector DB dashboard                      |
@@ -239,6 +241,24 @@ Every user query is scanned before reaching the LLM. Detects 17 adversarial patt
 | `injection_via_code_block` | high        |
 
 Detected events are logged to the independent `security_events` hash chain. Query text is hashed (SHA-256) before storage — plaintext is never stored.
+
+### PII Scrubbing
+
+Before any text is written to the audit log, the `PII Scrubber` scans for Australian personally identifiable information and replaces detected values with typed tokens. The LLM and eligibility engine receive the **original** query; only the audit-stored copy is redacted.
+
+| Token | Detects |
+|-------|---------|
+| `[TFN]` | Tax File Number (8–9 digit, context-aware) |
+| `[MEDICARE]` | Medicare card number (10 digits) |
+| `[PHONE]` | Australian mobile (04xx) and landline (0x xxxx xxxx) |
+| `[EMAIL]` | Email addresses |
+| `[DOB]` | Date of birth with contextual keyword |
+| `[BSB]` | Bank State Branch number (NNN-NNN) |
+| `[ACCOUNT]` | Bank account number (with "account number" context) |
+
+Intentionally **not** scrubbed: monetary amounts (`$400/week`), age statements (`35 years old`), and duration phrases (`unemployed since January 2024`) — these are required for eligibility evaluation.
+
+When PII is detected, a `pii_detected` security event is emitted (types logged, never values) and `sovereign_security_events_total{event_type="pii_detected"}` is incremented.
 
 ### Tamper-Evident Audit Logging
 
@@ -519,6 +539,7 @@ sovereign-ai/
 │   │       └── openai_compat.py    # OpenAI-compatible (Groq, OpenRouter, Gemini, Ollama, custom)
 │   ├── audit/
 │   │   ├── logger.py               # Postgres hash-chained audit trail
+│   │   ├── pii_scrubber.py         # Australian PII detection and redaction (TFN, Medicare, phone, email, DOB, BSB, account)
 │   │   ├── security_scanner.py     # Prompt injection / jailbreak detection
 │   │   ├── anomaly_detector.py     # Behavioral sliding-window anomaly detection
 │   │   ├── chain_anchor.py         # Hourly hash anchoring + RFC 3161 TSA
@@ -529,9 +550,9 @@ sovereign-ai/
 │   └── network/
 │       └── egress_monitor.py       # httpx transport: log or block all outbound calls
 ├── neo4j/seed/
-│   └── 01_benefits_eligibility.cypher  # Policy graph (5 benefits: Income Support, Housing Assistance, Carer Payment, DSP, Age Pension)
+│   └── 01_benefits_eligibility.cypher  # Policy graph (6 benefits: Income Support, Housing Assistance, Carer Payment, DSP, Age Pension, FTB-A)
 ├── qdrant/
-│   └── seed_documents.py           # 11 authoritative policy documents (DSP + Age Pension added)
+│   └── seed_documents.py           # 13 authoritative policy documents (DSP, Age Pension, FTB-A added)
 ├── postgres/
 │   ├── init/
 │   │   ├── 01_audit_schema.sql     # Base audit schema + views
@@ -579,7 +600,7 @@ sovereign-ai/
 
 2. **Hallucination guard** — If no authoritative source is found (Neo4j + Qdrant both empty for a query), the system refuses to speculate.
 
-3. **Full audit trail** — Every request is logged with: query hash, session ID, complexity score, tier, policy nodes accessed, document IDs retrieved, eligibility outcome, token usage, latency, and a five-dimension system fingerprint (model config, source integrity, policy graph hash, router thresholds, temporal anchor) enabling replay-perfect audit verification.
+3. **Full audit trail** — Every request is logged with: query hash (of PII-scrubbed text), session ID, complexity score, tier, policy nodes accessed, document IDs retrieved, eligibility outcome, token usage, latency, and a five-dimension system fingerprint (model config, source integrity, policy graph hash, router thresholds, temporal anchor) enabling replay-perfect audit verification.
 
 4. **Graph-grounded responses** — The LLM receives structured rules from Neo4j as part of its prompt. It cannot invent eligibility thresholds.
 
@@ -614,13 +635,15 @@ Full control evidence for government security review is in `docs/`:
 
 - [x] Add Disability Support Pension benefit to graph
 - [x] Age Pension benefit
-- [ ] PII scrubbing / pseudonymisation in audit logs
+- [x] Family Tax Benefit Part A (FTB-A)
+- [x] Policy versioning (`valid_from` / `valid_to` on all nodes + active-only query filters)
+- [x] Benefit rate lookup endpoint (`GET /api/benefits/{id}/rates`)
+- [x] PII scrubbing / pseudonymisation in audit logs (TFN, Medicare, phone, email, DOB, BSB, account)
 - [ ] K3s HA cluster deployment manifests (3-node)
 - [ ] vLLM local model serving (remove cloud LLM dependency)
 - [ ] Redis-backed session state (required for multi-worker / multi-replica scaling)
 - [ ] OpenTelemetry distributed tracing (Tempo)
 - [ ] Neo4j causal cluster (3-node HA)
-- [ ] Policy versioning (`valid_from` / `valid_to` on all nodes)
 - [ ] Appeals workflow integration
 - [ ] Human-in-the-loop escalation endpoint
 - [ ] gRPC audit streaming for SIEM integration

@@ -42,6 +42,7 @@ from audit.anomaly_detector import BehavioralAnomalyDetector
 from audit.chain_anchor import ChainAnchor
 from audit.dual_control import DualControlManager
 from audit.logger import AuditLogger
+from audit.pii_scrubber import scrub as scrub_pii
 from audit.security_scanner import ScanResult, scan as security_scan, query_hash as make_query_hash
 from config import settings
 from governance.fingerprint import SystemFingerprint
@@ -476,7 +477,11 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
         (m.content for m in reversed(request.messages) if m.role == "user"),
         "",
     )
-    q_hash = make_query_hash(user_message)
+
+    # ── PII Scrubbing (audit path only — LLM receives original) ───────────
+    pii_result = scrub_pii(user_message)
+    audit_message = pii_result.scrubbed_text   # stored in audit log
+    q_hash = make_query_hash(audit_message)
 
     # Mutable state collected across pipeline steps
     state = _PipelineState(request_id=request_id)
@@ -493,6 +498,23 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
             log.warning(
                 f"[{request_id}] Security events: "
                 f"{[e.event_type for e in scan_result.events]}"
+            )
+
+        # PII detected → emit security event (types logged, not values)
+        if not pii_result.clean and audit:
+            SECURITY_EVENTS.labels(event_type="pii_detected", severity="medium").inc()
+            log.warning(
+                f"[{request_id}] PII detected in query — types: {pii_result.detected_types}; "
+                "audit log will contain scrubbed version"
+            )
+            await audit.log_security_event_direct(
+                event_type="pii_detected",
+                severity="medium",
+                details={
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "pii_types": pii_result.detected_types,
+                },
             )
 
         # ── Step 2: Complexity Routing ─────────────────────────────────────
@@ -601,7 +623,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
                 request_id=request_id,
                 session_id=session_id,
                 client_ip=client_ip,
-                user_message=user_message,
+                user_message=audit_message,
                 query_hash=q_hash,
                 state=state,
                 response_text=_INSUFFICIENT_MSG,
@@ -649,7 +671,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
                     request_id=request_id,
                     session_id=session_id,
                     client_ip=client_ip,
-                    user_message=user_message,
+                    user_message=audit_message,
                     query_hash=q_hash,
                     state=state,
                     response_text=response_text,
@@ -678,7 +700,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
                 request_id=request_id,
                 session_id=session_id,
                 client_ip=client_ip,
-                user_message=user_message,
+                user_message=audit_message,
                 query_hash=q_hash,
                 state=state,
                 response_text=response_text,
@@ -748,6 +770,17 @@ async def list_benefits():
     if not policy_graph:
         raise HTTPException(503, "Policy graph unavailable")
     return await policy_graph.list_benefits()
+
+
+@app.get("/api/benefits/{benefit_id}/rates")
+async def get_benefit_rates(benefit_id: str):
+    """Return the current rate schedule and metadata for a specific benefit."""
+    if not policy_graph:
+        raise HTTPException(503, "Policy graph unavailable")
+    rates = await policy_graph.get_benefit_rates(benefit_id)
+    if not rates:
+        raise HTTPException(404, f"Benefit '{benefit_id}' not found or inactive")
+    return rates
 
 
 @app.get("/api/benefits/{benefit_id}/rules")
